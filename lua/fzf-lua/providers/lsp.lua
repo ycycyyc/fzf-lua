@@ -140,6 +140,11 @@ local function location_handler(opts, cb, _, result, ctx, _)
   if opts.jump_to_single_result and #result == 1 then
     jump_to_location(opts, result[1], encoding)
   end
+
+  if opts.filter and type(opts.filter) == "function" then
+    items = opts.filter(items)
+  end
+
   for _, entry in ipairs(items) do
     if not opts.current_buffer_only or core.CTX().bname == entry.filename then
       entry = make_entry.lcol(entry, opts)
