@@ -107,9 +107,10 @@ at it. That, **and colorful file icons and git indicators!**.
 ## Dependencies
 
 - [`neovim`](https://github.com/neovim/neovim/releases) version > `0.5.0`
-- [`fzf`](https://github.com/junegunn/fzf) version > `0.24`
+- [`fzf`](https://github.com/junegunn/fzf) version > `0.25`
   **or** [`skim`](https://github.com/lotabout/skim) binary installed
 - [nvim-web-devicons](https://github.com/nvim-tree/nvim-web-devicons)
+  **or** [mini.icons](https://github.com/echasnovski/mini.icons)
   (optional)
 
 ### Optional dependencies
@@ -157,6 +158,8 @@ Using [vim-plug](https://github.com/junegunn/vim-plug)
 Plug 'ibhagwan/fzf-lua', {'branch': 'main'}
 " optional for icon support
 Plug 'nvim-tree/nvim-web-devicons'
+" or if using mini.icons/mini.nvim
+" Plug 'echasnovski/mini.icons'
 ```
 
 Using [packer.nvim](https://github.com/wbthomason/packer.nvim)
@@ -165,6 +168,8 @@ Using [packer.nvim](https://github.com/wbthomason/packer.nvim)
 use { "ibhagwan/fzf-lua",
   -- optional for icon support
   requires = { "nvim-tree/nvim-web-devicons" }
+  -- or if using mini.icons/mini.nvim
+  -- requires = { "echasnovski/mini.icons" }
 }
 ```
 
@@ -221,8 +226,9 @@ nnoremap <c-P> <cmd>lua require('fzf-lua').files()<CR>
 
 or if using `init.lua`:
 ```lua
-vim.keymap.set("n", "<c-P>",
-  "<cmd>lua require('fzf-lua').files()<CR>", { silent = true })
+vim.keymap.set("n", "<c-P>", require('fzf-lua').files, { desc = "Fzf Files" })
+-- Or, with args
+vim.keymap.set("n", "<c-P>", function() require('fzf-lua').files({ ... }) end, { desc = "Fzf Files" })
 ```
 
 ### Resume
@@ -555,6 +561,8 @@ require'fzf-lua'.setup {
     -- window, can be set to 'false' to remove all borders or to
     -- 'none', 'single', 'double', 'thicc' (+cc) or 'rounded' (default)
     border           = { '╭', '─', '╮', '│', '╯', '─', '╰', '│' },
+    -- Backdrop opacity, 0 is fully opaque, 100 is fully transparent (i.e. disabled)
+    backdrop         = 60,
     -- requires neovim > v0.9.0, passed as is to `nvim_open_win`
     -- can be sent individually to any provider to set the win title
     -- title         = "Title",
@@ -600,14 +608,14 @@ require'fzf-lua'.setup {
       -- can be used to add custom fzf-lua mappings, e.g:
       --   vim.keymap.set("t", "<C-j>", "<Down>", { silent = true, buffer = true })
     end,
-    -- called once *after* the fzf interface is closed
+    -- called once _after_ the fzf interface is closed
     -- on_close = function() ... end
   },
   keymap = {
-    -- These override the default tables completely
-    -- no need to set to `false` to disable a bind
-    -- delete or modify is sufficient
+    -- Below are the default binds, setting any value in these tables will override
+    -- the defaults, to inherit from the defaults change [1] from `false` to `true`
     builtin = {
+      false,          -- do not inherit from defaults
       -- neovim `:tmap` mappings for the fzf win
       ["<F1>"]        = "toggle-help",
       ["<F2>"]        = "toggle-fullscreen",
@@ -622,6 +630,7 @@ require'fzf-lua'.setup {
       ["<S-left>"]    = "preview-page-reset",
     },
     fzf = {
+      false,          -- do not inherit from defaults
       -- fzf '--bind=' options
       ["ctrl-z"]      = "abort",
       ["ctrl-u"]      = "unix-line-discard",
@@ -630,6 +639,8 @@ require'fzf-lua'.setup {
       ["ctrl-a"]      = "beginning-of-line",
       ["ctrl-e"]      = "end-of-line",
       ["alt-a"]       = "toggle-all",
+      ["alt-g"]       = "last",
+      ["alt-G"]       = "first",
       -- Only valid with fzf previewers (bat/cat/git/etc)
       ["f3"]          = "toggle-preview-wrap",
       ["f4"]          = "toggle-preview",
@@ -638,10 +649,10 @@ require'fzf-lua'.setup {
     },
   },
   actions = {
-    -- These override the default tables completely
-    -- no need to set to `false` to disable an action
-    -- delete or modify is sufficient
+    -- Below are the default actions, setting any value in these tables will override
+    -- the defaults, to inherit from the defaults change [1] from `false` to `true`
     files = {
+      false,          -- do not inherit from defaults
       -- providers that inherit these actions:
       --   files, git_files, git_status, grep, lsp
       --   oldfiles, quickfix, loclist, tags, btags
@@ -659,6 +670,7 @@ require'fzf-lua'.setup {
       ["alt-l"]       = actions.file_sel_to_ll,
     },
     buffers = {
+      false,          -- do not inherit from defaults
       -- providers that inherit these actions:
       --   buffers, tabs, lines, blines
       ["default"]     = actions.buf_edit,
@@ -672,18 +684,26 @@ require'fzf-lua'.setup {
     -- set to `false` to remove a flag
     -- set to `true` for a no-value flag
     -- for raw args use `fzf_args` instead
-    ["--ansi"]        = true,
-    ["--info"]        = "inline-right", -- fzf < v0.42 = "inline"
-    ["--height"]      = "100%",
-    ["--layout"]      = "reverse",
-    ["--border"]      = "none",
+    ["--ansi"]           = true,
+    ["--info"]           = "inline-right", -- fzf < v0.42 = "inline"
+    ["--height"]         = "100%",
+    ["--layout"]         = "reverse",
+    ["--border"]         = "none",
+    ["--highlight-line"] = true,           -- fzf >= v0.53
   },
   -- Only used when fzf_bin = "fzf-tmux", by default opens as a
   -- popup 80% width, 80% height (note `-p` requires tmux > 3.2)
   -- and removes the sides margin added by `fzf-tmux` (fzf#3162)
   -- for more options run `fzf-tmux --help`
   fzf_tmux_opts       = { ["-p"] = "80%,80%", ["--margin"] = "0,0" },
-  -- fzf's `--color=` arguments (optional)
+  -- 
+  -- Set fzf's terminal colorscheme (optional)
+  --
+  -- Set to `true` to automatically generate an fzf's colorscheme from
+  -- Neovim's current colorscheme:
+  -- fzf_colors       = true,
+  -- 
+  -- Building a custom colorscheme, has the below specifications:
   -- If rhs is of type "string" rhs will be passed raw, e.g.:
   --   `["fg"] = "underline"` will be translated to `--color fg:underline`
   -- If rhs is of type "table", the following convention is used:
@@ -794,9 +814,9 @@ require'fzf-lua'.setup {
   },
   -- PROVIDERS SETUP
   -- use `defaults` (table or function) if you wish to set "global-provider" defaults
-  -- for example, disabling file icons globally and open the quickfix list at the top
+  -- for example, using "mini.icons" globally and open the quickfix list at the top
   --   defaults = {
-  --     file_icons   = false,
+  --     file_icons   = "mini",
   --     copen        = "topleft copen",
   --   },
   files = {
@@ -806,7 +826,7 @@ require'fzf-lua'.setup {
     prompt            = 'Files❯ ',
     multiprocess      = true,           -- run command in a separate process
     git_icons         = true,           -- show git icons?
-    file_icons        = true,           -- show file icons?
+    file_icons        = true,           -- show file icons (true|"devicons"|"mini")?
     color_icons       = true,           -- colorize file|git icons
     -- path_shorten   = 1,              -- 'true' or number, shorten path?
     -- Uncomment for custom vscode-like formatter where the filename is first:
@@ -829,6 +849,7 @@ require'fzf-lua'.setup {
     cwd_prompt_shorten_len = 32,        -- shorten prompt beyond this length
     cwd_prompt_shorten_val = 1,         -- shortened path parts length
     toggle_ignore_flag = "--no-ignore", -- flag toggled in `actions.toggle_ignore`
+    toggle_hidden_flag = "--hidden",    -- flag toggled in `actions.toggle_hidden`
     actions = {
       -- inherits from 'actions.files', here we can override
       -- or set bind to 'false' to disable a default action
@@ -846,7 +867,7 @@ require'fzf-lua'.setup {
       cmd           = 'git ls-files --exclude-standard',
       multiprocess  = true,           -- run command in a separate process
       git_icons     = true,           -- show git icons?
-      file_icons    = true,           -- show file icons?
+      file_icons    = true,           -- show file icons (true|"devicons"|"mini")?
       color_icons   = true,           -- colorize file|git icons
       -- force display the cwd header line regardless of your current working
       -- directory can also be used to hide the header when not wanted
@@ -964,7 +985,7 @@ require'fzf-lua'.setup {
     input_prompt      = 'Grep For❯ ',
     multiprocess      = true,           -- run command in a separate process
     git_icons         = true,           -- show git icons?
-    file_icons        = true,           -- show file icons?
+    file_icons        = true,           -- show file icons (true|"devicons"|"mini")?
     color_icons       = true,           -- colorize file|git icons
     -- executed command priority is 'cmd' (if exists)
     -- otherwise auto-detect prioritizes `rg` over `grep`
@@ -972,7 +993,10 @@ require'fzf-lua'.setup {
     -- cmd            = "rg --vimgrep",
     grep_opts         = "--binary-files=without-match --line-number --recursive --color=auto --perl-regexp -e",
     rg_opts           = "--column --line-number --no-heading --color=always --smart-case --max-columns=4096 -e",
-    -- set to 'true' to always parse globs in both 'grep' and 'live_grep'
+    -- Uncomment to use the rg config file `$RIPGREP_CONFIG_PATH`
+    -- RIPGREP_CONFIG_PATH = vim.env.RIPGREP_CONFIG_PATH
+    --
+    -- Set to 'true' to always parse globs in both 'grep' and 'live_grep'
     -- search strings will be split using the 'glob_separator' and translated
     -- to '--iglob=' arguments, requires 'rg'
     -- can still be used when 'false' by calling 'live_grep_glob' directly
@@ -987,6 +1011,11 @@ require'fzf-lua'.setup {
     --   ...
     --   return new_query, flags
     -- end,
+    --
+    -- Enable with narrow term width, split results to multiple lines
+    -- NOTE: multiline requires fzf >= v0.53 and is ignored otherwise
+    -- multiline      = 1,      -- Display as: PATH:LINE:COL\nTEXT
+    -- multiline      = 2,      -- Display as: PATH:LINE:COL\nTEXT\n
     actions = {
       -- actions inherit from 'actions.files' and merge
       -- this action toggles between 'grep' and 'live_grep'
@@ -1014,7 +1043,7 @@ require'fzf-lua'.setup {
   },
   buffers = {
     prompt            = 'Buffers❯ ',
-    file_icons        = true,         -- show file icons?
+    file_icons        = true,         -- show file icons (true|"devicons"|"mini")?
     color_icons       = true,         -- colorize file|git icons
     sort_lastused     = true,         -- sort buffers() by last used
     show_unloaded     = true,         -- show unloaded buffers
@@ -1033,7 +1062,7 @@ require'fzf-lua'.setup {
     prompt            = 'Tabs❯ ',
     tab_title         = "Tab",
     tab_marker        = "<<",
-    file_icons        = true,         -- show file icons?
+    file_icons        = true,         -- show file icons (true|"devicons"|"mini")?
     color_icons       = true,         -- colorize file|git icons
     actions = {
       -- actions inherit from 'actions.buffers' and merge
@@ -1339,6 +1368,7 @@ temporarily overridden by its corresponding `winopts` option:
 |FzfLuaNormal           |Normal       |`hls.normal`        |Main win `fg/bg`|
 |FzfLuaBorder           |Normal       |`hls.border`        |Main win border|
 |FzfLuaTitle            |FzfLuaNormal |`hls.title`         |Main win title|
+|FzfLuaBackdrop         |*bg=Black    |`hls.backdrop`      |Backdrop color|
 |FzfLuaPreviewNormal    |FzfLuaNormal |`hls.preview_normal`|Builtin preview `fg/bg`|
 |FzfLuaPreviewBorder    |FzfLuaBorder |`hls.preview_border`|Builtin preview border|
 |FzfLuaPreviewTitle     |FzfLuaTitle  |`hls.preview_title` |Builtin preview title|
@@ -1352,19 +1382,34 @@ temporarily overridden by its corresponding `winopts` option:
 |FzfLuaScrollFloatFull  |PmenuThumb   |`hls.scrollfloat_f` |Builtin preview `float` scroll full|
 |FzfLuaHelpNormal       |FzfLuaNormal |`hls.help_normal`   |Help win `fg/bg`|
 |FzfLuaHelpBorder       |FzfLuaBorder |`hls.help_border`   |Help win border|
-|FzfLuaHeaderBind  |*BlanchedAlmond   |`hls.header_bind`   |Header keybind|
-|FzfLuaHeaderText  |*Brown1           |`hls.header_text`   |Header text|
-|FzfLuaPathColNr   |*CadetBlue1       |`hls.path_colnr`    |Path col nr (`lines,qf,lsp,diag`)|
-|FzfLuaPathLineNr  |*LightGreen       |`hls.path_linenr`   |Path line nr (`lines,qf,lsp,diag`)|
-|FzfLuaBufName     |*LightMagenta     |`hls.buf_name`      |Buffer name (`lines`)|
-|FzfLuaBufNr       |*BlanchedAlmond   |`hls.buf_nr`        |Buffer number (all buffers)|
-|FzfLuaBufFlagCur  |*Brown1           |`hls.buf_flag_cur`  |Buffer line (`buffers`)|
-|FzfLuaBufFlagAlt  |*CadetBlue1       |`hls.buf_flag_alt`  |Buffer line (`buffers`)|
-|FzfLuaTabTitle    |*LightSkyBlue1    |`hls.tab_title`     |Tab title (`tabs`)|
-|FzfLuaTabMarker   |*BlanchedAlmond   |`hls.tab_marker`    |Tab marker (`tabs`)|
-|FzfLuaDirIcon     |Directory         |`hls.dir_icon`      |Paths directory icon|
-|FzfLuaDirPart     |Comment           |`hls.dir_part`      |Directory hl when `formatter=path.filename_first`|
-|FzfLuaLiveSym     |*Brown1           |`hls.live_sym`      |LSP live symbols query match|
+|FzfLuaHeaderBind   |*BlanchedAlmond  |`hls.header_bind`   |Header keybind|
+|FzfLuaHeaderText   |*Brown1          |`hls.header_text`   |Header text|
+|FzfLuaPathColNr    |*CadetBlue1      |`hls.path_colnr`    |Path col nr (`lines,qf,lsp,diag`)|
+|FzfLuaPathLineNr   |*LightGreen      |`hls.path_linenr`   |Path line nr (`lines,qf,lsp,diag`)|
+|FzfLuaBufName      |*LightMagenta    |`hls.buf_name`      |Buffer name (`lines`)|
+|FzfLuaBufNr        |*BlanchedAlmond  |`hls.buf_nr`        |Buffer number (all buffers)|
+|FzfLuaBufFlagCur   |*Brown1          |`hls.buf_flag_cur`  |Buffer line (`buffers`)|
+|FzfLuaBufFlagAlt   |*CadetBlue1      |`hls.buf_flag_alt`  |Buffer line (`buffers`)|
+|FzfLuaTabTitle     |*LightSkyBlue1   |`hls.tab_title`     |Tab title (`tabs`)|
+|FzfLuaTabMarker    |*BlanchedAlmond  |`hls.tab_marker`    |Tab marker (`tabs`)|
+|FzfLuaDirIcon      |Directory        |`hls.dir_icon`      |Paths directory icon|
+|FzfLuaDirPart      |Comment          |`hls.dir_part`      |Path formatters directory hl group|
+|FzfLuaFilePart     |@none            |`hls.file_part`     |Path formatters file hl group|
+|FzfLuaLiveSym      |*Brown1          |`hls.live_sym`      |LSP live symbols query match|
+|FzfLuaFzfNormal    |FzfLuaNormal     |`fzf.normal`        |fzf's `fg\|bg`|
+|FzfLuaFzfCursorLine|FzfLuaCursorLine |`fzf.cursorline`    |fzf's `fg+\|bg+`|
+|FzfLuaFzfMatch     |Special          |`fzf.match`         |fzf's `hl+`|
+|FzfLuaFzfBorder    |FzfLuaBorder     |`fzf.border`        |fzf's `border`|
+|FzfLuaFzfScrollbar |FzfLuaFzfBorder  |`fzf.scrollbar`     |fzf's `scrollbar`|
+|FzfLuaFzfSeparator |FzfLuaFzfBorder  |`fzf.separator`     |fzf's `separator`|
+|FzfLuaFzfGutter    |FzfLuaNormal     |`fzf.gutter`        |fzf's `gutter` (hl `bg` is used)|
+|FzfLuaFzfHeader    |FzfLuaTitle      |`fzf.header`        |fzf's `header`|
+|FzfLuaFzfInfo      |NonText          |`fzf.info`          |fzf's `info`|
+|FzfLuaFzfPointer   |Special          |`fzf.pointer`       |fzf's `pointer`|
+|FzfLuaFzfMarker    |FzfLuaFzfPointer |`fzf.marker`        |fzf's `marker`|
+|FzfLuaFzfSpinner   |FzfLuaFzfPointer |`fzf.spinner`       |fzf's `spinner`|
+|FzfLuaFzfPrompt    |Special          |`fzf.prompt`        |fzf's `prompt`|
+|FzfLuaFzfQuery     |FzfLuaNormal     |`fzf.query`         |fzf's `header`|
 
 <sup><sub>&ast;Not a highlight group, RGB color from `nvim_get_color_map`</sub></sup>
 
@@ -1397,7 +1442,18 @@ require('fzf-lua').setup {
 #### Fzf Colors
 
 Fzf's terminal colors are controlled by fzf's `--color` flag which can be
-configured during setup via `fzf_colors` (see `man fzf` for all color options):
+configured during setup via `fzf_colors`.
+
+Set to `true` to have fzf-lua automatically generate an fzf colorscheme from
+your current Neovim colorscheme:
+```lua
+require("fzf-lua").setup({ fzf_colors = true })
+-- Or in the direct call options
+:lua require("fzf-lua").files({ fzf_colors = true })
+:FzfLua files fzf_colors=true
+```
+
+Customizing the fzf colorscheme (see `man fzf` for all color options):
 ```lua
 require('fzf-lua').setup {
   fzf_colors = {

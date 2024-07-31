@@ -44,9 +44,11 @@ M.resume_set = function(what, val, opts)
   local fn_key = tostring(opts.__resume_key):match("[^%s]+$")
   local key1 = string.format("__resume_map.%s%s", fn_key,
     type(what) == "string" and ("." .. what) or "")
-  local key2 = string.format("__resume_data.opts.%s", what)
   utils.map_set(M, key1, val)
-  utils.map_set(M, key2, val)
+  if type(what) == "string" then
+    local key2 = string.format("__resume_data.opts.%s", what)
+    utils.map_set(M, key2, val)
+  end
   -- backward compatibility for users using `get_last_query`
   if what == "query" then
     utils.map_set(M, "__resume_data.last_query", val)
@@ -71,23 +73,6 @@ end
 M.setup_opts = {}
 M.globals = setmetatable({}, {
   __index = function(_, index)
-    -- bind tables are logical exception, if specified, do not merge with defaults
-    -- normalize all binds as lowercase or we can have duplicate keys (#654)
-    if index == "actions" then
-      return {
-        files = utils.map_tolower(
-          utils.map_get(M.setup_opts, "actions.files") or M.defaults.actions.files),
-        buffers = utils.map_tolower(
-          utils.map_get(M.setup_opts, "actions.buffers") or M.defaults.actions.buffers),
-      }
-    elseif index == "keymap" then
-      return {
-        fzf = utils.map_tolower(
-          utils.map_get(M.setup_opts, "keymap.fzf") or M.defaults.keymap.fzf),
-        builtin = utils.map_tolower(
-          utils.map_get(M.setup_opts, "keymap.builtin") or M.defaults.keymap.builtin),
-      }
-    end
     -- build normalized globals, option priority below:
     --   (1) provider specific globals (post-setup)
     --   (2) generic global-defaults (post-setup), i.e. `setup({ defaults = { ... } })`
@@ -95,6 +80,25 @@ M.globals = setmetatable({}, {
     local fzflua_default = utils.map_get(M.defaults, index)
     local setup_default = utils.map_get(M.setup_opts.defaults, index)
     local setup_value = utils.map_get(M.setup_opts, index)
+    local function build_bind_tables(keys)
+      -- bind tables are logical exception, do not merge with defaults unless `[1] == true`
+      -- normalize all binds as lowercase to prevent duplicate keys (#654)
+      local ret = {}
+      for _, k in ipairs(keys) do
+        ret[k] = setup_value and type(setup_value[k]) == "table"
+            and vim.tbl_deep_extend("keep", utils.tbl_deep_clone(setup_value[k]),
+              setup_value[k][1] == true and fzflua_default[k] or {})
+            or utils.tbl_deep_clone(fzflua_default[k])
+        ret[k][1] = nil
+        ret[k] = utils.map_tolower(ret[k], "^alt%-%a$")
+      end
+      return ret
+    end
+    if index == "actions" then
+      return build_bind_tables({ "files", "buffers" })
+    elseif index == "keymap" then
+      return build_bind_tables({ "fzf", "builtin" })
+    end
     -- values that aren't tables can't get merged, return highest priority
     if setup_value ~= nil and type(setup_value) ~= "table" then
       return setup_value
@@ -188,16 +192,16 @@ function M.normalize_opts(opts, globals, __resume_key)
   -- normalize all binds as lowercase or we can have duplicate keys (#654)
   ---@param m {fzf: table<string, unknown>, builtin: table<string, unknown>}
   ---@return {fzf: table<string, unknown>, builtin: table<string, unknown>}?
-  local keymap_tolower = function(m)
+  local keymap_tolower = function(m, exclude_patterns)
     return m and {
-      fzf = utils.map_tolower(m.fzf),
-      builtin = utils.map_tolower(m.builtin)
+      fzf = utils.map_tolower(m.fzf, exclude_patterns),
+      builtin = utils.map_tolower(m.builtin, exclude_patterns),
     } or nil
   end
-  opts.keymap = keymap_tolower(opts.keymap)
-  opts.actions = utils.map_tolower(opts.actions)
-  globals.keymap = keymap_tolower(globals.keymap)
-  globals.actions = utils.map_tolower(globals.actions)
+  opts.keymap = keymap_tolower(opts.keymap, "^alt%-%a$")
+  opts.actions = utils.map_tolower(opts.actions, "^alt%-%a$")
+  globals.keymap = keymap_tolower(globals.keymap, "^alt%-%a$")
+  globals.actions = utils.map_tolower(globals.actions, "^alt%-%a$")
 
   -- inherit from globals.actions?
   if type(globals._actions) == "function" then
@@ -355,7 +359,13 @@ function M.normalize_opts(opts, globals, __resume_key)
   -- Setup completion options
   if opts.complete then
     opts.actions = opts.actions or {}
-    opts.actions["default"] = actions.complete
+    opts.actions.enter = actions.complete
+  end
+
+  -- Backward compat, "default" action is "enter"
+  if opts.actions then
+    opts.actions.enter = opts.actions.enter or opts.actions.default
+    opts.actions.default = nil
   end
 
   -- Merge highlight overrides with defaults, we only do this after the
@@ -364,11 +374,16 @@ function M.normalize_opts(opts, globals, __resume_key)
 
   -- Setup formatter options
   if opts.formatter then
+    local _fmt_ver = 1
+    if type(opts.formatter) == "table" then
+      _fmt_ver = opts.formatter.v or opts.formatter[2] or _fmt_ver
+      opts.formatter = opts.formatter.name or opts.formatter[1]
+    end
     local _fmt = M.globals["formatters." .. opts.formatter]
     if _fmt then
       opts._fmt = opts._fmt or {}
       if opts._fmt.to == nil then
-        opts._fmt.to = _fmt.to or _fmt._to and _fmt._to(opts) or nil
+        opts._fmt.to = _fmt.to or _fmt._to and _fmt._to(opts, _fmt_ver) or nil
       end
       if opts._fmt.from == nil then
         opts._fmt.from = _fmt.from
@@ -380,7 +395,7 @@ function M.normalize_opts(opts, globals, __resume_key)
       end
       if type(_fmt.enrich) == "function" then
         -- formatter requires enriching the config (fzf_opts, etc)
-        opts = _fmt.enrich(opts) or opts
+        opts = _fmt.enrich(opts, _fmt_ver) or opts
       end
     else
       utils.warn(("Invalid formatter '%s', ignoring."):format(opts.formatter))
@@ -487,6 +502,17 @@ function M.normalize_opts(opts, globals, __resume_key)
     end
   end
 
+  if opts.__FZF_VERSION and opts.__FZF_VERSION >= 0.53
+      -- `_multiline` is used to override `multiline` inherited from `defaults = {}`
+      and opts.multiline and opts._multiline ~= false then
+    -- If `multiline` was specified we add both "read0" & "print0" flags
+    opts.fzf_opts["--read0"] = true
+    opts.fzf_opts["--print0"] = true
+  else
+    -- If not possible (fzf v<0.53|skim), nullify the option
+    opts.multiline = nil
+  end
+
   -- are we using fzf-tmux, if so get available columns
   opts._is_fzf_tmux = vim.env.TMUX and opts.fzf_bin:match("fzf%-tmux$")
   if opts._is_fzf_tmux then
@@ -513,16 +539,35 @@ function M.normalize_opts(opts, globals, __resume_key)
   end
 
 
-  if devicons.plugin_loaded() then
+  if opts.file_icons then
     -- refresh icons, does nothing if "vim.o.bg" didn't change
-    devicons.load({
-      icon_padding = opts.file_icon_padding,
-      dir_icon = { icon = opts.dir_icon, color = utils.hexcol_from_hl(opts.hls.dir_icon, "fg") }
-    })
-  elseif opts.file_icons then
-    -- Disable devicons if not available
-    utils.warn("nvim-web-devicons isn't available, disabling 'file_icons'.")
-    opts.file_icons = nil
+    if not devicons.load({
+          plugin = opts.file_icons,
+          icon_padding = opts.file_icon_padding,
+          dir_icon = {
+            icon = opts.dir_icon,
+            color = utils.hexcol_from_hl(opts.hls.dir_icon, "fg")
+          }
+        })
+    then
+      -- Disable file_icons if requested package isn't available
+      utils.warn(string.format("error loading '%s', disabling 'file_icons'.",
+        opts.file_icons == "mini" and "mini.icons" or "nvim-web-devicons"))
+      opts.file_icons = nil
+    end
+    if opts.file_icons == "mini" then
+      -- When using "mini.icons" process lines 1-by-1 in the luv callback as having
+      -- to wait for all lines takes much longer due to the `vim.filetype.match` call
+      -- which makes the UX appear laggy
+      opts.process1 = opts.process1 == nil and true or opts.process1
+      -- We also want to store the cached extensions/filenames in the main thread
+      -- which we do in "make_entry.postprocess"
+      opts.__mt_postprocess = opts.multiprocess
+          and [[return require("make_entry").postprocess]]
+          -- NOTE: we don't need to update mini when running on main thread
+          -- or require("fzf-lua.make_entry").postprocess
+          or nil
+    end
   end
 
   -- libuv.spawn_nvim_fzf_cmd() pid callback
@@ -621,6 +666,7 @@ M._action_to_helpstr = {
   [actions.arg_add]             = "arg-list-add",
   [actions.arg_del]             = "arg-list-delete",
   [actions.toggle_ignore]       = "toggle-ignore",
+  [actions.toggle_hidden]       = "toggle-hidden",
   [actions.grep_lgrep]          = "grep<->lgrep",
   [actions.sym_lsym]            = "sym<->lsym",
   [actions.tmux_buf_set_reg]    = "set-register",

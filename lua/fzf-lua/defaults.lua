@@ -29,6 +29,8 @@ M.defaults                      = {
     row        = 0.35,
     col        = 0.55,
     border     = "rounded",
+    zindex     = 50,
+    backdrop   = 60,
     fullscreen = false,
     preview    = {
       default      = "builtin",
@@ -87,6 +89,8 @@ M.defaults                      = {
       ["ctrl-a"]         = "beginning-of-line",
       ["ctrl-e"]         = "end-of-line",
       ["alt-a"]          = "toggle-all",
+      ["alt-g"]          = "last",
+      ["alt-G"]          = "first",
       -- Only valid with fzf previewers (bat/cat/git/etc)
       ["f3"]             = "toggle-preview-wrap",
       ["f4"]             = "toggle-preview",
@@ -114,11 +118,12 @@ M.defaults                      = {
   },
   fzf_bin       = nil,
   fzf_opts      = {
-    ["--ansi"]   = true,
-    ["--info"]   = "inline-right",
-    ["--height"] = "100%",
-    ["--layout"] = "reverse",
-    ["--border"] = "none",
+    ["--ansi"]           = true,
+    ["--info"]           = "inline-right",
+    ["--height"]         = "100%",
+    ["--layout"]         = "reverse",
+    ["--border"]         = "none",
+    ["--highlight-line"] = true,
   },
   fzf_tmux_opts = { ["-p"] = "80%,80%", ["--margin"] = "0,0" },
   previewers    = {
@@ -196,8 +201,15 @@ M.defaults                      = {
     path = {
       filename_first = {
         -- <Tab> is used as the invisible space between the parent and the file part
-        enrich = function(o)
+        enrich = function(o, v)
           o.fzf_opts = vim.tbl_extend("keep", o.fzf_opts or {}, { ["--tabstop"] = 1 })
+          if tonumber(v) == 2 then
+            -- https://github.com/ibhagwan/fzf-lua/pull/1255
+            o.fzf_opts = vim.tbl_extend("keep", o.fzf_opts or {}, {
+              ["--ellipsis"] = " ",
+              ["--no-hscroll"] = true,
+            })
+          end
           return o
         end,
         -- underscore `_to` returns a custom to function when options could
@@ -207,26 +219,34 @@ M.defaults                      = {
         -- (globals or file-locals) are stored by ref and will be nil in the
         -- `string.dump` (from `config.bytecode`), we use the 3rd function
         -- argument `m` to pass module imports (path, utils, etc).
-        _to = function(o)
-          local _, escseq = utils.ansi_from_hl(o.hls.dir_part, "foo")
-          return [[
+        _to = function(o, v)
+          local _, hl_dir = utils.ansi_from_hl(o.hls.dir_part, "foo")
+          local _, hl_file = utils.ansi_from_hl(o.hls.file_part, "foo")
+          local v2 = tonumber(v) ~= 2 and "" or [[, "\xc2\xa0" .. string.rep(" ", 200) .. s]]
+          return ([[
             return function(s, _, m)
               local _path, _utils = m.path, m.utils
-              local _escseq = "]] .. (escseq or "") .. [["
+              local _hl_dir = "%s"
+              local _hl_file = "%s"
+              local tail = _path.tail(s)
               local parent = _path.parent(s)
+              if #_hl_file > 0 then
+                tail = _hl_file .. tail .. _utils.ansi_escseq.clear
+              end
               if parent then
                 parent = _path.remove_trailing(parent)
-                if #_escseq > 0 then
-                  parent = _escseq .. parent .. _utils.ansi_escseq.clear
+                if #_hl_dir > 0 then
+                  parent = _hl_dir .. parent .. _utils.ansi_escseq.clear
                 end
-                return _path.tail(s) .. "\t" .. parent
+                return tail .. "\t" .. parent %s
               else
-                return s
+                return tail %s
               end
             end
-          ]]
+          ]]):format(hl_dir or "", hl_file or "", v2, v2)
         end,
         from = function(s, _)
+          s = s:gsub("\xc2\xa0     .*$", "") -- gsub v2 postfix
           local parts = utils.strsplit(s, utils.nbsp)
           local last = parts[#parts]
           -- Lines from grep, lsp, tags are formatted <file>:<line>:<col>:<text>
@@ -242,11 +262,39 @@ M.defaults                      = {
             local fullpath = path.join({ parent, filename })
             -- overwrite last part with restored fullpath + rest of line
             parts[#parts] = fullpath .. rest:sub(#parent + 1)
-            s = table.concat(parts, utils.nbsp)
+            return table.concat(parts, utils.nbsp)
+          else
+            return s
           end
-          return s
         end
-      }
+      },
+      dirname_first = {
+        -- Credit fo @folke :-)
+        -- https://github.com/ibhagwan/fzf-lua/pull/1255
+        _to = function(o)
+          local _, hl_dir = utils.ansi_from_hl(o.hls.dir_part, "foo")
+          local _, hl_file = utils.ansi_from_hl(o.hls.file_part, "foo")
+          return ([[
+            return function(s, _, m)
+              local _path, _utils = m.path, m.utils
+              local _hl_dir = "%s"
+              local _hl_file = "%s"
+              local tail = _path.tail(s)
+              local parent = _path.parent(s)
+              if #_hl_file > 0 then
+                tail = _hl_file .. tail .. _utils.ansi_escseq.clear
+              end
+              if parent then
+                parent = _path.add_trailing(parent)
+                if #_hl_dir > 0 then
+                  parent = _hl_dir .. parent .. _utils.ansi_escseq.clear
+                end
+              end
+              return (parent or "") .. tail
+            end
+          ]]):format(hl_dir or "", hl_file or "")
+        end,
+      },
     }
   },
 }
@@ -270,6 +318,7 @@ M.defaults.files                = {
   rg_opts                = [[--color=never --files --hidden --follow -g "!.git"]],
   fd_opts                = "--color=never --type f --hidden --follow --exclude .git",
   toggle_ignore_flag     = "--no-ignore",
+  toggle_hidden_flag     = "--hidden",
   _actions               = function() return M.globals.actions.files end,
   actions                = { ["ctrl-g"] = { actions.toggle_ignore } },
   winopts                = { preview = { winopts = { cursorline = false } } },
@@ -324,6 +373,7 @@ M.defaults.git                  = {
       ["ctrl-y"]  = { fn = actions.git_yank_commit, exec_silent = true },
     },
     fzf_opts      = { ["--no-multi"] = true },
+    _multiline    = false,
   },
   bcommits = {
     prompt        = "BCommits> ",
@@ -339,30 +389,33 @@ M.defaults.git                  = {
       ["ctrl-y"]  = { fn = actions.git_yank_commit, exec_silent = true },
     },
     fzf_opts      = { ["--no-multi"] = true },
+    _multiline    = false,
   },
   branches = {
-    prompt   = "Branches> ",
-    cmd      = "git branch --all --color",
-    preview  = "git log --graph --pretty=oneline --abbrev-commit --color {1}",
-    fzf_opts = { ["--no-multi"] = true },
-    actions  = {
+    prompt     = "Branches> ",
+    cmd        = "git branch --all --color",
+    preview    = "git log --graph --pretty=oneline --abbrev-commit --color {1}",
+    actions    = {
       ["default"] = actions.git_switch,
       ["ctrl-x"]  = { fn = actions.git_branch_del, reload = true },
       ["ctrl-a"]  = { fn = actions.git_branch_add, field_index = "{q}", reload = true },
     },
-    cmd_add  = { "git", "branch" },
-    cmd_del  = { "git", "branch", "--delete" },
+    cmd_add    = { "git", "branch" },
+    cmd_del    = { "git", "branch", "--delete" },
+    fzf_opts   = { ["--no-multi"] = true },
+    _multiline = false,
   },
   tags = {
-    prompt   = "Tags> ",
-    cmd      = [[git for-each-ref --color --sort="-taggerdate" --format ]]
+    prompt     = "Tags> ",
+    cmd        = [[git for-each-ref --color --sort="-taggerdate" --format ]]
         .. [["%(color:yellow)%(refname:short)%(color:reset) ]]
         .. [[%(color:green)(%(taggerdate:relative))%(color:reset)]]
         .. [[ %(subject) %(color:blue)%(taggername)%(color:reset)" refs/tags]],
-    preview  = [[git log --graph --color --pretty=format:"%C(yellow)%h%Creset ]]
+    preview    = [[git log --graph --color --pretty=format:"%C(yellow)%h%Creset ]]
         .. [[%Cgreen(%><(12)%cr%><|(12))%Creset %s %C(blue)<%an>%Creset" {1}]],
-    fzf_opts = { ["--no-multi"] = true },
-    actions  = { ["default"] = actions.git_checkout },
+    actions    = { ["default"] = actions.git_checkout },
+    fzf_opts   = { ["--no-multi"] = true },
+    _multiline = false,
   },
   stash = {
     prompt        = "Stash> ",
@@ -400,7 +453,7 @@ M.defaults.grep                 = {
   multiprocess   = true,
   file_icons     = true and M._has_devicons,
   color_icons    = true,
-  git_icons      = true,
+  git_icons      = false,
   fzf_opts       = { ["--multi"] = true },
   grep_opts      = utils.is_darwin()
       and "--binary-files=without-match --line-number --recursive --color=always "
@@ -613,7 +666,7 @@ M.defaults.btags                = {
 M.defaults.colorschemes         = {
   prompt       = "Colorschemes> ",
   live_preview = true,
-  winopts      = { height = 0.55, width = 0.50 },
+  winopts      = { height = 0.55, width = 0.50, backdrop = false },
   fzf_opts     = { ["--no-multi"] = true },
   actions      = { ["default"] = actions.colorscheme },
 }
@@ -626,7 +679,7 @@ M.defaults.highlights           = {
 
 M.defaults.awesome_colorschemes = {
   prompt       = "Awesome Colorschemes> ",
-  winopts      = { row = 0, col = 0.99, width = 0.50 },
+  winopts      = { row = 0, col = 0.99, width = 0.50, backdrop = false },
   live_preview = true,
   max_threads  = 5,
   fzf_opts     = {
@@ -918,6 +971,7 @@ M.defaults.search_history       = {
 
 M.defaults.registers            = {
   prompt       = "Registers> ",
+  multiline    = true,
   ignore_empty = true,
   actions      = { ["default"] = actions.paste_register },
   fzf_opts     = { ["--no-multi"] = true },
@@ -1043,6 +1097,7 @@ M.defaults.__HLS                = {
   normal         = "FzfLuaNormal",
   border         = "FzfLuaBorder",
   title          = "FzfLuaTitle",
+  backdrop       = "FzfLuaBackdrop",
   help_normal    = "FzfLuaHelpNormal",
   help_border    = "FzfLuaHelpBorder",
   preview_normal = "FzfLuaPreviewNormal",
@@ -1068,7 +1123,24 @@ M.defaults.__HLS                = {
   tab_marker     = "FzfLuaTabMarker",
   dir_icon       = "FzfLuaDirIcon",
   dir_part       = "FzfLuaDirPart",
+  file_part      = "FzfLuaFilePart",
   live_sym       = "FzfLuaLiveSym",
+  fzf            = {
+    normal     = "FzfLuaFzfNormal",
+    cursorline = "FzfLuaFzfCursorLine",
+    match      = "FzfLuaFzfMatch",
+    border     = "FzfLuaFzfBorder",
+    scrollbar  = "FzfLuaFzfScrollbar",
+    separator  = "FzfLuaFzfSeparator",
+    gutter     = "FzfLuaFzfGutter",
+    header     = "FzfLuaFzfHeader",
+    info       = "FzfLuaFzfInfo",
+    pointer    = "FzfLuaFzfPointer",
+    marker     = "FzfLuaFzfMarker",
+    spinner    = "FzfLuaFzfSpinner",
+    prompt     = "FzfLuaFzfPrompt",
+    query      = "FzfLuaFzfQuery",
+  }
 }
 
 M.defaults.__WINOPTS            = {

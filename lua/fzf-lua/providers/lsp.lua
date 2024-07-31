@@ -112,10 +112,26 @@ end
 local function location_handler(opts, cb, _, result, ctx, _)
   local encoding = vim.lsp.get_client_by_id(ctx.client_id).offset_encoding
   result = utils.tbl_islist(result) and result or { result }
+  -- HACK: make sure target URI is valid for buggy LSPs (#1317)
+  for i, x in ipairs(result) do
+    for _, k in ipairs({ "uri", "targetUri" }) do
+      if type(x[k]) == "string" and not x[k]:match("://") then
+        result[i][k] = "file://" .. result[i][k]
+      end
+    end
+  end
   if opts.ignore_current_line then
+    local uri = vim.uri_from_bufnr(core.CTX().bufnr)
     local cursor_line = core.CTX().cursor[1] - 1
     result = vim.tbl_filter(function(l)
-      if l.range and l.range.start and l.range.start.line == cursor_line then
+      if (l.uri
+            and l.uri == uri
+            and utils.map_get(l, "range.start.line") == cursor_line)
+          or
+          (l.targetUri
+            and l.targetUri == uri
+            and utils.map_get(l, "targetRange.start.line") == cursor_line)
+      then
         return false
       end
       return true
@@ -912,7 +928,7 @@ M.code_actions = function(opts)
     -- single results to be skipped with 'async = false'
     opts.jump_to_single_result = false
     opts.lsp_params = vim.lsp.util.make_range_params(0)
-    opts.lsp_params.context = {
+    opts.lsp_params.context = opts.context or {
       -- Neovim still uses `vim.lsp.diagnostic` API in "nvim/runtime/lua/vim/lsp/buf.lua"
       -- continue to use it until proven otherwise, this also fixes #707 as diagnostics
       -- must not be nil or some LSP servers will fail (e.g. ruff_lsp, rust_analyzer)
@@ -942,7 +958,7 @@ M.code_actions = function(opts)
   -- 3rd arg are "once" options to override
   -- existing "registered" ui_select options
   ui_select.register(opts, true, opts)
-  vim.lsp.buf.code_action()
+  vim.lsp.buf.code_action({ context = opts.context, filter = opts.filter })
   -- vim.defer_fn(function()
   --   ui_select.deregister({}, true, true)
   -- end, 100)

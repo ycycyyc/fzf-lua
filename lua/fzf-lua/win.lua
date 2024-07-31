@@ -70,94 +70,65 @@ function FzfWin:setup_keybinds()
   -- If the user did not override the Esc action ensure it's
   -- not bound to anything else such as `<C-\><C-n>` (#663)
   if self.actions["esc"] == actions.dummy_abort then
-    utils.keymap_set("t", "<Esc>", "<Esc>", { buffer = 0 })
+    utils.keymap_set("t", "<Esc>", "<Esc>", { buffer = 0, nowait = true })
   end
 end
 
 function FzfWin:generate_layout(winopts)
+  local pwopts
   local row, col = winopts.row, winopts.col
   local height, width = winopts.height, winopts.width
-  local signcol_width = winopts.signcol_width or 0
-  local preview_pos = winopts.preview_pos
-  local preview_size = winopts.preview_size
-  local prev_row, prev_col = row + 1, col + 1
-  local prev_height, prev_width
-  local padding = 2
-  local anchor
-  local vert_split = winopts.split and winopts.split:match("vnew") ~= nil
-  if preview_pos == "down" or preview_pos == "up" then
-    height = height - padding
-    prev_width = width
-    prev_height = utils.round(height * preview_size / 100, 0.6)
-    height = height - prev_height
-    if preview_pos == "up" then
-      row = row + prev_height + padding
-      if winopts.split then
-        anchor = "NW"
-        prev_row = 1
-        prev_col = 1
-        prev_width = prev_width - 2
-        prev_height = prev_height - 1
-      else
-        anchor = "SW"
-        prev_row = row - 1
+  local preview_pos, preview_size = winopts.preview_pos, winopts.preview_size
+  if winopts.split then
+    -- Custom "split"
+    pwopts = { relative = "win", anchor = "NW", row = 1, col = 1 }
+    if preview_pos == "down" or preview_pos == "up" then
+      pwopts.width = width - 2
+      pwopts.height = utils.round((height) * preview_size / 100, math.huge) - 2
+      if preview_pos == "down" then
+        pwopts.row = height - pwopts.height - 1
       end
-    else
-      anchor = "NW"
-      if winopts.split then
-        prev_col = 1
-        prev_row = height + padding
-        prev_height = prev_height - 1
-        prev_width = prev_width - 2
-      else
-        prev_row = row + height + 3
+    else -- left|right
+      pwopts.height = height - 2
+      pwopts.width = utils.round(width * preview_size / 100, math.huge) - 2
+      if preview_pos == "right" then
+        pwopts.col = width - pwopts.width - 1 + winopts.signcol_width
       end
     end
-  elseif preview_pos == "left" or preview_pos == "right" then
-    prev_height = height
-    prev_width = utils.round(width * preview_size / 100)
-    width = width - prev_width - 2
-    if preview_pos == "left" then
-      anchor = "NE"
-      col = col + prev_width + 2
-      prev_col = col - 1
-      if winopts.split then
-        prev_row = 1
-        prev_width = prev_width - 1 - signcol_width
-        prev_height = prev_height - padding
-        if vert_split then
-          anchor = "NW"
-          prev_col = 1
-        else
-          prev_col = col - 3 - signcol_width
-        end
+  else
+    -- Float window
+    pwopts = { relative = "editor" }
+    if preview_pos == "down" or preview_pos == "up" then
+      height = height - 2
+      pwopts.col = col + 1 -- +border
+      pwopts.width = width
+      pwopts.height = utils.round((height) * preview_size / 100, 0.5)
+      height = height - pwopts.height
+      if preview_pos == "down" then
+        -- next row +2xborder
+        pwopts.row = row + 1 + height + 2
+      else                   -- up
+        pwopts.row = row + 1 -- +border
+        row = pwopts.row + 1 + pwopts.height
       end
-    else
-      anchor = "NW"
-      if winopts.split then
-        prev_row = 1
-        prev_col = width + 4 - signcol_width
-        prev_width = prev_width - 3 + signcol_width
-        prev_height = prev_height - padding
-      else
-        prev_col = col + width + 3
+    else                   -- left|right
+      width = width - 2
+      pwopts.row = row + 1 -- +border
+      pwopts.height = height
+      pwopts.width = utils.round(width * preview_size / 100, 0.5)
+      width = width - pwopts.width
+      if preview_pos == "right" then
+        -- next col +2xborder
+        pwopts.col = col + 1 + width + 2
+      else                   -- left
+        pwopts.col = col + 1 -- +border
+        col = pwopts.col + 1 + pwopts.width
       end
     end
   end
   return {
-    fzf = {
-      row = row,
-      col = col,
-      height = height,
-      width = width,
-    },
-    preview = {
-      anchor = anchor,
-      row = prev_row,
-      col = prev_col,
-      height = prev_height,
-      width = prev_width,
-    }
+    fzf = { row = row, col = col, height = height, width = width },
+    preview = pwopts,
   }
 end
 
@@ -256,10 +227,10 @@ local normalize_winopts = function(o)
     winopts.relative = nil
   else
     if not winopts.row or winopts.row <= 1 then
-      winopts.row = math.floor((vim.o.lines - winopts.height) * winopts.row)
+      winopts.row = math.floor((vim.o.lines - winopts.height - 2) * winopts.row)
     end
     if not winopts.col or winopts.col <= 1 then
-      winopts.col = math.floor((vim.o.columns - winopts.width) * winopts.col)
+      winopts.col = math.floor((vim.o.columns - winopts.width - 2) * winopts.col)
     end
     winopts.col = math.min(winopts.col, max_width - winopts.width)
     winopts.row = math.min(winopts.row, max_height - winopts.height)
@@ -350,6 +321,60 @@ end
 function FzfWin.autoclose()
   if not _self then return nil end
   return _self._autoclose
+end
+
+function FzfWin:set_backdrop()
+  -- Called from redraw?
+  if self.backdrop_win then
+    if vim.api.nvim_win_is_valid(self.backdrop_win) then
+      vim.api.nvim_win_set_config(self.backdrop_win, {
+        width = vim.o.columns,
+        height = vim.o.lines,
+      })
+    end
+    return
+  end
+
+  -- Validate backdrop hlgroup and opacity
+  self.hls.backdrop = type(self.hls.backdrop) == "string"
+      and self.hls.backdrop or "FzfLuaBackdrop"
+  self.winopts.backdrop = tonumber(self.winopts.backdrop)
+      or self.winopts.backdrop == true and 60
+      or 100
+  if self.winopts.backdrop < 0 or self.winopts.backdrop > 99 then return end
+
+  -- Neovim bg has no color, will look weird
+  if #utils.hexcol_from_hl("Normal", "bg") == 0 then return end
+
+  -- Code from lazy.nvim (#1344)
+  self.backdrop_buf = vim.api.nvim_create_buf(false, true)
+  self.backdrop_win = vim.api.nvim_open_win(self.backdrop_buf, false, {
+    relative = "editor",
+    width = vim.o.columns,
+    height = vim.o.lines,
+    row = 0,
+    col = 0,
+    style = "minimal",
+    focusable = false,
+    zindex = self.winopts.zindex - 1,
+  })
+  utils.wo(self.backdrop_win, "winhighlight", "Normal:" .. self.hls.backdrop)
+  utils.wo(self.backdrop_win, "winblend", self.winopts.backdrop)
+  vim.bo[self.backdrop_buf].buftype = "nofile"
+  vim.bo[self.backdrop_buf].filetype = "fzflua_backdrop"
+end
+
+function FzfWin:close_backdrop()
+  if not self.backdrop_win or not self.backdrop_buf then return end
+  if self.backdrop_win and vim.api.nvim_win_is_valid(self.backdrop_win) then
+    vim.api.nvim_win_close(self.backdrop_win, true)
+  end
+  if self.backdrop_buf and vim.api.nvim_buf_is_valid(self.backdrop_buf) then
+    vim.api.nvim_buf_delete(self.backdrop_buf, { force = true })
+  end
+  self.backdrop_buf = nil
+  self.backdrop_win = nil
+  -- vim.cmd("redraw")
 end
 
 local function opt_matches(opts, key, str)
@@ -443,25 +468,23 @@ function FzfWin:fs_preview_layout(fs)
   local height_diff = 0
   local width_diff = 0
   if preview_pos == "down" or preview_pos == "up" then
+    border_winopts.col, prev_winopts.col = 0, 1
     width_diff = vim.o.columns - border_winopts.width
     if preview_pos == "down" then
       height_diff = vim.o.lines - border_winopts.row - border_winopts.height - vim.o.cmdheight
-    elseif preview_pos == "up" then
-      height_diff = border_winopts.row - border_winopts.height
+    else -- up
+      height_diff = border_winopts.row
+      border_winopts.row, prev_winopts.row = 0, 1
     end
-    border_winopts.col = 0
-    prev_winopts.col = border_winopts.col + 1
-  elseif preview_pos == "left" or preview_pos == "right" then
+  else -- left|right
+    border_winopts.row, prev_winopts.row = 0, 1
     height_diff = vim.o.lines - border_winopts.height - vim.o.cmdheight
-    if preview_pos == "left" then
-      border_winopts.col = border_winopts.col - 1
-      prev_winopts.col = prev_winopts.col - 1
-      width_diff = border_winopts.col - border_winopts.width
-    elseif preview_pos == "right" then
+    if preview_pos == "right" then
       width_diff = vim.o.columns - border_winopts.col - border_winopts.width
+    else -- left
+      width_diff = border_winopts.col - 1
+      border_winopts.col, prev_winopts.col = 0, 1
     end
-    border_winopts.row = 0
-    prev_winopts.row = border_winopts.row + 1
   end
 
   prev_winopts.height = prev_winopts.height + height_diff
@@ -480,12 +503,12 @@ function FzfWin:preview_layout()
     -- 'generate_layout' will then use the sign column available width
     -- to assure a perfect alignment of the builtin previewer window
     -- and the dummy native fzf previewer window border underneath it
-    local signcol_width = vim.wo[self.fzf_winid].signcolumn == "no" and 1 or 0
+    local signcol_width = vim.wo[self.fzf_winid].signcolumn == "yes" and 1 or 0
     self.layout = self:generate_layout({
       row = wininfo.winrow,
-      col = wininfo.wincol,
+      col = wininfo.wincol + signcol_width,
       height = wininfo.height,
-      width = api.nvim_win_get_width(self.fzf_winid),
+      width = api.nvim_win_get_width(self.fzf_winid) - signcol_width,
       signcol_width = signcol_width,
       preview_pos = self.winopts.preview_pos,
       preview_size = self.winopts.preview_size,
@@ -494,35 +517,22 @@ function FzfWin:preview_layout()
   end
   if not self.layout then return {}, {} end
 
-  local anchor = self.layout.preview.anchor
-  local row, col = self.layout.preview.row, self.layout.preview.col
-  local width, height = self.layout.preview.width, self.layout.preview.height
-  if not anchor or not width or width < 1 or not height or height < 1 then
-    return {}, {}
-  end
-
-  -- we cannot use relative with floating windows due to:
-  -- https://github.com/neovim/neovim/pull/14770
-  -- only use relative when using splits
-  local winopts = { relative = "editor", focusable = false, style = "minimal" }
-  if self.winopts.split then
-    winopts.relative = "win"
-  end
-  local preview_opts = vim.tbl_extend("force", winopts, {
+  local preview_opts = vim.tbl_extend("force", self.layout.preview, {
+    zindex = 991,
+    style = "minimal",
     focusable = true,
-    anchor = anchor,
-    width = width,
-    height = height,
-    col = col,
-    row = row
   })
-  local border_winopts = vim.tbl_extend("force", winopts, {
-    anchor = anchor,
-    width = width + 2,
-    height = height + 2,
-    col = anchor:match("W") and col - 1 or col + 1,
-    row = anchor:match("N") and row - 1 or row + 1
-  })
+  local border_winopts = {
+    zindex = 990,
+    style = "minimal",
+    focusable = false,
+    relative = self.layout.preview.relative,
+    anchor = self.layout.preview.anchor,
+    width = self.layout.preview.width + 2,
+    height = self.layout.preview.height + 2,
+    col = self.layout.preview.col - 1,
+    row = self.layout.preview.row - 1,
+  }
   return preview_opts, border_winopts
 end
 
@@ -612,8 +622,6 @@ function FzfWin:redraw_preview()
     self.border_buf = self:redraw_preview_border()
     self.preview_winid = api.nvim_open_win(tmp_buf, false, self.prev_winopts)
     self.border_winid = api.nvim_open_win(self.border_buf, false, self.border_winopts)
-    -- nowrap border or long filenames will mess things up
-    vim.wo[self.border_winid].wrap = false
     -- Add win local var for the preview|border windows
     api.nvim_win_set_var(self.preview_winid, "fzf_lua_preview", true)
     api.nvim_win_set_var(self.border_winid, "fzf_lua_preview", true)
@@ -672,6 +680,7 @@ function FzfWin:redraw()
   if not self.winopts.split and self.previewer_is_builtin then
     self.layout = self:generate_layout(self.winopts)
   end
+  self:set_backdrop()
   if self:validate() then
     self:redraw_main()
   end
@@ -704,6 +713,7 @@ function FzfWin:redraw_main()
     style = "minimal",
     relative = relative,
     border = self.winopts.border,
+    zindex = self.winopts.zindex,
     title = utils.__HAS_NVIM_09 and self.winopts.title or nil,
     title_pos = utils.__HAS_NVIM_09 and self.winopts.title_pos or nil,
   }
@@ -831,6 +841,7 @@ function FzfWin:create()
   -- When using fzf-tmux we don't need to create windows
   -- as tmux popups will be used instead
   if self._o._is_fzf_tmux then
+    self:set_backdrop()
     return
   end
 
@@ -850,6 +861,9 @@ function FzfWin:create()
     vim.cmd("redraw")
     return self.fzf_bufnr
   end
+
+  -- Set backdrop
+  self:set_backdrop()
 
   if not self.winopts.split and self.previewer_is_builtin then
     self.layout = self:generate_layout(self.winopts)
@@ -943,6 +957,7 @@ function FzfWin:close(fzf_bufnr)
   -- prevents race condition with 'win_leave'
   self.closing = true
   self.close_help()
+  self:close_backdrop()
   self:close_preview()
   if self.fzf_winid and vim.api.nvim_win_is_valid(self.fzf_winid) then
     -- run in a pcall due to potential errors while closing the window
@@ -1201,7 +1216,7 @@ function FzfWin:update_title(title)
 
   local suffix = fn.strcharpart(top, width_title + fn.strwidth(prefix), width)
   local line = ("%s%s%s"):format(prefix, title, suffix)
-  api.nvim_buf_set_lines(border_buf, 0, 1, true, { line })
+  pcall(api.nvim_buf_set_lines, border_buf, 0, 1, true, { line })
 
   if self.hls.preview_title and #title > 0 then
     pcall(vim.api.nvim_win_call, self.border_winid, function()
@@ -1348,21 +1363,21 @@ function FzfWin.toggle_help()
   -- fzf and neovim (builtin) keymaps
   for _, m in ipairs({ "builtin", "fzf" }) do
     for k, v in pairs(self.keymap[m]) do
-      if keymap_ignore[k] then goto continue end
-      -- value can be defined as a table with addl properties (help string)
-      if type(v) == "table" then
-        v = v.desc or v[1]
-      end
-      -- only add preview keybinds respective of
-      -- the current preview mode
-      if v and (not _preview_keymaps[v] or m == preview_mode) then
-        if m == "builtin" then
-          k = utils.neovim_bind_to_fzf(k)
+      if not keymap_ignore[k] then
+        -- value can be defined as a table with addl properties (help string)
+        if type(v) == "table" then
+          v = v.desc or v[1]
         end
-        table.insert(keymaps,
-          format_bind(m, k, v, opts.mode_width, opts.keybind_width, opts.name_width))
+        -- only add preview keybinds respective of
+        -- the current preview mode
+        if v and (not _preview_keymaps[v] or m == preview_mode) then
+          if m == "builtin" then
+            k = utils.neovim_bind_to_fzf(k)
+          end
+          table.insert(keymaps,
+            format_bind(m, k, v, opts.mode_width, opts.keybind_width, opts.name_width))
+        end
       end
-      ::continue::
     end
   end
 
@@ -1371,7 +1386,7 @@ function FzfWin.toggle_help()
     for k, v in pairs(self.actions) do
       if k == "default" then k = "enter" end
       if type(v) == "table" then
-        v = config.get_action_helpstr(v[1]) or v
+        v = v.desc or config.get_action_helpstr(v[1]) or config.get_action_helpstr(v.fn) or v
       elseif v then
         v = config.get_action_helpstr(v) or v
       end
@@ -1379,7 +1394,7 @@ function FzfWin.toggle_help()
         -- skips 'v == false'
         table.insert(keymaps,
           format_bind("action", k,
-            ("%s"):format(v):gsub(" ", ""),
+            ("%s"):format(tostring(v)):gsub(" ", ""),
             opts.mode_width, opts.keybind_width, opts.name_width))
       end
     end

@@ -63,6 +63,18 @@ function M.raw_fzf(contents, fzf_cli_args, opts)
     utils.tbl_join(cmd, { opts.fzf_cli_args })
   end
 
+  local function get_EOL(flag)
+    for _, f in ipairs(cmd) do
+      if f:match("%-%-" .. flag) then
+        return "\0"
+      end
+    end
+    return "\n"
+  end
+
+  local readEOL = get_EOL("read0")
+  local printEOL = get_EOL("print0")
+
   if contents then
     if type(contents) == "string" and #contents > 0 then
       if opts.silent_fail ~= false then
@@ -99,20 +111,22 @@ function M.raw_fzf(contents, fzf_cli_args, opts)
   ---@type function|nil
   local handle_contents
 
-  if utils.__IS_WINDOWS then
-    windows_pipe_server = uv.new_pipe(false)
-    windows_pipe_server:bind(fifotmpname)
-    windows_pipe_server:listen(16, function()
-      output_pipe = uv.new_pipe(false)
-      windows_pipe_server:accept(output_pipe)
-      handle_contents()
-    end)
-  else
-    -- Create the output pipe
-    -- We use tbl for perf reasons, from ':help system':
-    --  If {cmd} is a List it runs directly (no 'shell')
-    --  If {cmd} is a String it runs in the 'shell'
-    vim.fn.system({ "mkfifo", fifotmpname })
+  if type(contents) == "function" or type(contents) == "table" then
+    if utils.__IS_WINDOWS then
+      windows_pipe_server = uv.new_pipe(false)
+      windows_pipe_server:bind(fifotmpname)
+      windows_pipe_server:listen(16, function()
+        output_pipe = uv.new_pipe(false)
+        windows_pipe_server:accept(output_pipe)
+        handle_contents()
+      end)
+    else
+      -- Create the output pipe
+      -- We use tbl for perf reasons, from ':help system':
+      --  If {cmd} is a List it runs directly (no 'shell')
+      --  If {cmd} is a String it runs in the 'shell'
+      vim.fn.system({ "mkfifo", fifotmpname })
+    end
   end
 
   local function finish(_)
@@ -162,7 +176,7 @@ function M.raw_fzf(contents, fzf_cli_args, opts)
     if nl then
       return function(usrdata, cb)
         if not end_of_data(usrdata, cb) then
-          write_cb(tostring(usrdata) .. "\n", cb)
+          write_cb(tostring(usrdata) .. readEOL, cb)
         end
       end
     else
@@ -177,17 +191,15 @@ function M.raw_fzf(contents, fzf_cli_args, opts)
   handle_contents = vim.schedule_wrap(function()
     -- this part runs in the background. When the user has selected, it will
     -- error out, but that doesn't matter so we just break out of the loop.
-    if contents then
-      if type(contents) == "table" then
-        if not utils.tbl_isempty(contents) then
-          write_cb(vim.tbl_map(function(x)
-            return x .. "\n"
-          end, contents))
-        end
-        finish(4)
-      else
-        contents(usr_write_cb(true), usr_write_cb(false), output_pipe)
+    if type(contents) == "table" then
+      if not utils.tbl_isempty(contents) then
+        write_cb(vim.tbl_map(function(x)
+          return x .. readEOL
+        end, contents))
       end
+      finish(4)
+    elseif type(contents) == "function" then
+      contents(usr_write_cb(true), usr_write_cb(false), output_pipe)
     end
   end)
 
@@ -282,15 +294,19 @@ function M.raw_fzf(contents, fzf_cli_args, opts)
           default_opts = default_opts:gsub(utils.lua_regex_escape(p) .. "[=%s]+.-%s+%-%-", " --")
         end
         return default_opts
-      end)()
+      end)(),
+      -- Nullify user's RG config as this can cause conflicts
+      -- with fzf-lua's rg opts (#1266)
+      ["RIPGREP_CONFIG_PATH"] = type(opts.RIPGREP_CONFIG_PATH) == "string"
+          and vim.fn.expand(opts.RIPGREP_CONFIG_PATH) or "",
     },
     on_exit = function(_, rc, _)
       local output = {}
       local f = io.open(outputtmpname)
       if f then
-        for v in f:lines() do
-          table.insert(output, v)
-        end
+        output = vim.split(f:read("*a"), printEOL)
+        -- `file:read("*a")` appends an empty string on EOL
+        output[#output] = nil
         f:close()
       end
       finish(1)
@@ -326,11 +342,9 @@ function M.raw_fzf(contents, fzf_cli_args, opts)
     end
   end
 
-  if not contents or type(contents) == "string" then
-    goto wait_for_fzf
-  end
-
-  if not utils.__IS_WINDOWS then
+  if not utils.__IS_WINDOWS
+      and (type(contents) == "function" or type(contents) == "table")
+  then
     -- have to open this after there is a reader (termopen)
     -- otherwise this will block
     fd = uv.fs_open(fifotmpname, "w", -1)
@@ -340,8 +354,6 @@ function M.raw_fzf(contents, fzf_cli_args, opts)
     handle_contents()
   end
 
-
-  ::wait_for_fzf::
   return coroutine.yield()
 end
 

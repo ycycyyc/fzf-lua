@@ -196,9 +196,17 @@ require("fzf-lua").setup({ files = { formatter = "path.filename_first" } })
 
 #### globals.file_icons
 
-Type: `boolean`, Default: `true`
+Type: `boolean|string`, Default: `true`
 
-If available, add devicons to files.
+If available, display file icons.
+
+Set to `true` will attempt to use "nvim-web-devicons" and fallback to "mini.icons", other possible
+values are `devicons` or `mini` which force loading a specific icons plugin, for example:
+
+```lua
+:FzfLua files file_icons=mini
+:lua require("fzf-lua").files({ file_icons = "devicons"  })
+```
 
 #### globals.git_icons
 
@@ -248,6 +256,12 @@ Type: `string|table`, Default: `rounded`
 
 Border of the fzf-lua float, possible values are `none|single|double|rounded|thicc|thiccc|thicccc`
 or a custom border character array passed as is to `nvim_open_win`.
+
+#### globals.winopts.backdrop
+
+Type: `boolean|number`, Default: `60`
+
+Backdrop opacity value, 0 for fully opaque, 100 for fully transparent (i.e. disabled).
 
 #### globals.winopts.fullscreen
 
@@ -430,6 +444,12 @@ Type: `string`, Default: `FzfLuaTitle`
 
 Main fzf (terminal) window title highlight group.
 
+#### globals.hls.backdrop
+
+Type: `string`, Default: `FzfLuaBackdrop`
+
+Backdrop color, black by default, used to darken the background color when opening the UI.
+
 #### globals.hls.preview_normal
 
 Type: `string`, Default: `FzfLuaPreviewNormal`
@@ -579,13 +599,106 @@ completion, e.g. `complete_path`.
 
 Type: `string`, Default: `FzfLuaDirPart`
 
-Highlight group for the directory part when using `formatter=path.filename_first`.
+Highlight group for the directory part when using `path.dirname_first` or `path.filename_first` formatters.
+
+#### globals.hls.file_part
+
+Type: `string`, Default: `FzfLuaFilePart`
+
+Highlight group for the directory part when using `path.dirname_first` or `path.filename_first` formatters.
 
 #### globals.hls.live_sym
 
 Type: `string`, Default: `FzfLuaLiveSym`
 
 Highlight group for the matched characters in `lsp_live_workspace_symbols`.
+
+#### globals.hls.fzf.normal
+
+Type: `string`, Default: `FzfLuaFzfNormal`
+
+Highlight group for fzf's `fg` and `bg`, by default links to `FzfLuaNormal`.
+
+#### globals.hls.fzf.cursorline
+
+Type: `string`, Default: `FzfLuaFzfCursorLine`
+
+Highlight group for fzf's `fg+` and `bg+`, by default links to `FzfLuaCursorLine`.
+
+#### globals.hls.fzf.match
+
+Type: `string`, Default: `FzfLuaFzfMatch`
+
+Highlight group for fzf's `hl+`, by default links to `Special`.
+
+#### globals.hls.fzf.border
+
+Type: `string`, Default: `FzfLuaFzfBorder`
+
+Highlight group for fzf's `border`, by default links to `FzfLuaBorder`.
+
+#### globals.hls.fzf.scrollbar
+
+Type: `string`, Default: `FzfLuaFzfScrollbar`
+
+Highlight group for fzf's `border`, by default links to `FzfLuaFzfBorder`.
+
+#### globals.hls.fzf.separator
+
+Type: `string`, Default: `FzfLuaFzfSeparator`
+
+Highlight group for fzf's `separator`, by default links to `FzfLuaFzfBorder`.
+
+#### globals.hls.fzf.gutter
+
+Type: `string`, Default: `FzfLuaFzfGutter`
+
+Highlight group for fzf's `gutter`, by default links to `FzfLuaFzfBorder`.
+
+> **NOTE**: `bg` property of the highlight group will be used.
+
+#### globals.hls.fzf.header
+
+Type: `string`, Default: `FzfLuaFzfHeader`
+
+Highlight group for fzf's `header`, by default links to `FzfLuaTitle`.
+
+#### globals.hls.fzf.info
+
+Type: `string`, Default: `FzfLuaFzfInfo`
+
+Highlight group for fzf's `info`, by default links to `NonText`.
+
+#### globals.hls.fzf.pointer
+
+Type: `string`, Default: `FzfLuaFzfPointer`
+
+Highlight group for fzf's `pointer`, by default links to `Special`.
+
+#### globals.hls.fzf.marker
+
+Type: `string`, Default: `FzfLuaFzfMarker`
+
+Highlight group for fzf's `marker`, by default links to `FzfLuaFzfPointer`.
+
+#### globals.hls.fzf.spinner
+
+Type: `string`, Default: `FzfLuaFzfSpinner`
+
+Highlight group for fzf's `spinner`, by default links to `FzfLuaFzfPointer`.
+
+#### globals.hls.fzf.prompt
+
+Type: `string`, Default: `FzfLuaFzfPrompt`
+
+Highlight group for fzf's `prompt`, by default links to `Special`.
+
+#### globals.hls.fzf.query
+
+Type: `string`, Default: `FzfLuaFzfQuery`
+
+Highlight group for fzf's `query`, by default links to `FzfLuaNormal` and
+sets text to `regular` (non-bold).
 
 ---
 

@@ -204,7 +204,7 @@ M.buffers = function(opts)
   end
 
   opts = core.set_header(opts, opts.headers or { "actions", "cwd" })
-  opts = core.set_fzf_field_index(opts)
+  opts = opts.filename_only and opts or core.set_fzf_field_index(opts)
 
   core.fzf_exec(contents, opts)
 end
@@ -223,6 +223,9 @@ end
 
 M.buffer_lines = function(opts)
   if not opts then return end
+
+  -- formatter doesn't work with lines|blines as only filename is displayed
+  opts._fmt = false
 
   opts.fn_pre_fzf = function() core.CTX(true) end
   opts.fn_pre_fzf()
@@ -421,7 +424,7 @@ M.tabs = function(opts)
   end
 
   opts = core.set_header(opts, opts.headers or { "actions", "cwd" })
-  opts = core.set_fzf_field_index(opts, "{3}", "{}")
+  opts = opts.filename_only and opts or core.set_fzf_field_index(opts, "{4}", "{}")
 
   core.fzf_exec(contents, opts)
 end

@@ -287,9 +287,10 @@ end
 
 function Previewer.base:cmdline(_)
   local act = shell.raw_action(function(items, _, _)
+    self.opts._last_query = type(items[2]) == "string" and items[2] or nil
     self:display_entry(items[1])
     return ""
-  end, "{}", self.opts.debug)
+  end, "{} {q}", self.opts.debug)
   return act
 end
 
@@ -362,7 +363,7 @@ function Previewer.base:scroll(direction)
         -- we therefore need special handling for both scenarios with `ctrl-b`:
         --   (1) If the cursor is at line 1, do nothing
         --   (2) Else, test the cursor before and after, if the new position is further
-        --       down the buffer than the original, we're in the first page ,goto line 1 
+        --       down the buffer than the original, we're in the first page ,goto line 1
         local is_ctrl_b = string.byte(input, 1) == 2
         local pos = is_ctrl_b and vim.api.nvim_win_get_cursor(0)
         if is_ctrl_b and pos[1] == 1 then return end
@@ -689,7 +690,7 @@ function Previewer.buffer_or_file:populate_preview_buf(entry_str)
         }
       end
       if lines then
-        vim.api.nvim_buf_set_lines(tmpbuf, 0, -1, false, lines)
+        pcall(vim.api.nvim_buf_set_lines, tmpbuf, 0, -1, false, lines)
         -- swap preview buffer with new one
         self:set_preview_buf(tmpbuf)
         self:preview_buf_post(entry)
@@ -857,30 +858,45 @@ function Previewer.buffer_or_file:do_syntax(entry)
 end
 
 function Previewer.buffer_or_file:set_cursor_hl(entry)
-  pcall(vim.api.nvim_win_call, self.win.preview_winid, function()
-    local lnum, col = tonumber(entry.line), tonumber(entry.col)
-    local pattern = entry.pattern or entry.text
+  local mgrep = require("fzf-lua.providers.grep")
+  local regex = self.opts.__ACT_TO == mgrep.grep and self.opts._last_query
+      or self.opts.__ACT_TO == mgrep.live_grep and self.opts.search or nil
 
+  pcall(vim.api.nvim_win_call, self.win.preview_winid, function()
+    local lnum, col = tonumber(entry.line), tonumber(entry.col) or 0
     if not lnum or lnum < 1 then
-      api.nvim_win_set_cursor(0, { 1, 0 })
-      if pattern ~= "" then
-        fn.search(pattern, "c")
+      vim.wo.cursorline = false
+      self.orig_pos = { 1, 0 }
+      api.nvim_win_set_cursor(0, self.orig_pos)
+      return
+    end
+
+    self.orig_pos = { lnum, math.max(0, col - 1) }
+    api.nvim_win_set_cursor(0, self.orig_pos)
+    fn.clearmatches()
+
+    -- If regex is available (grep/lgrep), match on current line
+    local regex_match_len = 0
+    if regex and self.win.hls.search then
+      -- vim.regex is always magic, see `:help vim.regex`
+      local ok, reg = pcall(vim.regex, utils.regex_to_magic(regex))
+      if ok then
+        _, regex_match_len = reg:match_line(self.preview_bufnr, lnum - 1, math.max(1, col) - 1)
+        regex_match_len = tonumber(regex_match_len) or 0
+      elseif self.opts.silent ~= true then
+        utils.warn(string.format([[Unable to init vim.regex with "%s", %s]], regex, reg))
       end
-    else
-      if not pcall(api.nvim_win_set_cursor, 0, { lnum, math.max(0, col - 1) }) then
-        return
+      if regex_match_len > 0 then
+        fn.matchaddpos(self.win.hls.search, { { lnum, math.max(1, col), regex_match_len } }, 11)
       end
+    end
+
+    -- Fallback to cursor hl, only if column exists
+    if regex_match_len <= 0 and self.win.hls.cursor and col > 0 then
+      fn.matchaddpos(self.win.hls.cursor, { { lnum, math.max(1, col) } }, 11)
     end
 
     utils.zz()
-
-    self.orig_pos = api.nvim_win_get_cursor(0)
-
-    fn.clearmatches()
-
-    if self.win.hls.cursor and not (lnum <= 1 and col <= 1) then
-      fn.matchaddpos(self.win.hls.cursor, { { lnum, math.max(1, col) } }, 11)
-    end
   end)
 end
 

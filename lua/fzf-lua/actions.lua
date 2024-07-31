@@ -4,71 +4,81 @@ local path = require "fzf-lua.path"
 
 local M = {}
 
--- default action map key
-local _default_action = "default"
-
 -- return fzf '--expect=' string from actions keyval tbl
 -- on fzf >= 0.53 add the `prefix` key to the bind flags
 -- https://github.com/junegunn/fzf/issues/3829#issuecomment-2143235993
 M.expect = function(actions, opts)
   if not actions then return nil end
-  local keys = {}
+  local expect = {}
   local binds = {}
   for k, v in pairs(actions) do
-    local is_default = k == _default_action
-    local use_bind = type(v) == "table" and type(v.prefix) == "string"
+    -- actions that starts with _underscore are internal ashouldn't be set as fzf binds
+    -- the user can then use a custom bind and map it to the _underscore action using:
+    --   keymap = { fzf = { ["backward-eof"] = "print(_myaction)+accept" } },
+    --   actions = { ["_myaction"] = function(sel, opts) ... end,
+    (function()
+      -- Lua 5.1 goto compatiblity hack (function wrap)
+      if not v or k:match("^_") then return end
+      k = k == "default" and "enter" or k
+      v = type(v) == "table" and v or { fn = v }
+      if opts.__FZF_VERSION and opts.__FZF_VERSION >= 0.53 then
         -- `print(...)` action was only added with fzf 0.53
-        and opts.__FZF_VERSION and opts.__FZF_VERSION >= 0.53
-    if not use_bind and not is_default and v ~= false then
-      table.insert(keys, k)
-    elseif use_bind then
-      table.insert(binds, string.format("%s:print(%s)%s%s+accept",
-        is_default and "enter" or k,
-        is_default and "enter" or k,
-        v.prefix and "+" or "",
-        v.prefix and v.prefix:gsub("accept$", ""):gsub("%+$", "") or ""
-      ))
-    end
+        -- NOTE: we can no longer combine `--expect` and `--bind` as this will
+        -- print an extra empty line regardless of the pressaed keybind (#1241)
+        table.insert(binds, string.format("%s:print(%s)%s%s+accept",
+          k,
+          k,
+          v.prefix and "+" or "",
+          v.prefix and v.prefix:gsub("accept$", ""):gsub("%+$", "") or ""
+        ))
+      elseif k ~= "enter" then
+        table.insert(expect, k)
+      end
+    end)()
   end
-  return #keys > 0 and keys or nil, #binds > 0 and binds or nil
+  return #expect > 0 and expect or nil, #binds > 0 and binds or nil
 end
 
-M.normalize_selected = function(actions, selected)
-  -- 1. If there are no additional actions but the default,
-  --    the selected table will contain the selected item(s)
-  -- 2. If at least one non-default action was defined, our 'expect'
-  --    function above sent fzf the '--expect` flag, from `man fzf`:
-  --      When this option is set, fzf will print the name of
-  --      the key pressed as the first line of its output (or
-  --      as the second line if --print-query is also used).
-  --
+M.normalize_selected = function(actions, selected, opts)
   -- The below separates the keybind from the item(s)
   -- and makes sure 'selected' contains only item(s) or {}
   -- so it can always be enumerated safely
   if not actions or not selected then return end
-  local action = _default_action
-  if utils.tbl_count(actions) > 1 or not actions[_default_action] then
-    -- After removal of query (due to `--print-query`), keybind should be in item #1
-    -- when `--expect` is present, default keybind prints an empty string, leave  as "default"
-    -- on fzf 0.53 we set default to "enter", also leave as "default" for backward compat
-    if #selected[1] > 0 and selected[1] ~= "enter" then
-      action = selected[1]
-    end
-    -- entries are items #2+
-    local entries = {}
-    for i = 2, #selected do
-      table.insert(entries, selected[i])
-    end
-    return action, entries
+  if opts.__FZF_VERSION and opts.__FZF_VERSION >= 0.53 then
+    -- Using the new `print` action keybind is expected at `selected[1]`
+    local entries = vim.deepcopy(selected)
+    local keybind = table.remove(entries, 1)
+    return keybind, entries
   else
-    return action, selected
+    -- 1. If there are no additional actions but the default,
+    --    the selected table will contain the selected item(s)
+    -- 2. If at least one non-default action was defined, our 'expect'
+    --    function above sent fzf the '--expect` flag, from `man fzf`:
+    --      When this option is set, fzf will print the name of the key pressed as the
+    --      first line of its output (or as the second line if --print-query is also used).
+    if utils.tbl_count(actions) > 1 or not actions.enter then
+      -- After removal of query (due to `--print-query`), keybind should be in item #1
+      -- when `--expect` is present, default (enter) keybind prints an empty string
+      local entries = vim.deepcopy(selected)
+      local keybind = table.remove(entries, 1)
+      if #keybind == 0 then keybind = "enter" end
+      return keybind, entries
+    else
+      -- Only default (enter) action exists, no `--expect` was specified
+      -- therefore enter was pressed and no empty line in `selected[1]`
+      return "enter", selected
+    end
   end
 end
 
 M.act = function(actions, selected, opts)
   if not actions or not selected then return end
-  local keybind, entries = M.normalize_selected(actions, selected)
+  local keybind, entries = M.normalize_selected(actions, selected, opts)
   local action = actions[keybind]
+  -- Backward compat, was action defined as "default"
+  if not action and keybind == "enter" then
+    action = actions.default
+  end
   if type(action) == "table" then
     -- Two types of action as table:
     --   (1) map containing action properties (reload, noclose, etc)
@@ -84,9 +94,8 @@ M.act = function(actions, selected, opts)
     action(entries, opts)
   elseif type(action) == "string" then
     vim.cmd(action)
-  elseif keybind ~= _default_action then
-    utils.warn(("unsupported action: '%s', type:%s")
-      :format(keybind, type(action)))
+  else
+    utils.warn(("unsupported action: '%s', type:%s"):format(keybind, type(action)))
   end
 end
 
@@ -95,10 +104,8 @@ M.dummy_abort = function()
 end
 
 M.resume = function(_, _)
-  -- must call via vim.cmd or we create
-  -- circular 'require'
-  -- TODO: is this really a big deal?
-  vim.cmd("lua require'fzf-lua'.resume()")
+  -- call via loadstring to prevent a circular ref
+  loadstring([[require("fzf-lua").resume()]])()
 end
 
 M.vimcmd = function(vimcmd, selected, noesc)
@@ -111,75 +118,77 @@ M.vimcmd_file = function(vimcmd, selected, opts, pcall_vimcmd)
   local curbuf = vim.api.nvim_buf_get_name(0)
   local is_term = utils.is_term_buffer(0)
   for i = 1, #selected do
-    local entry = path.entry_to_file(selected[i], opts, opts.force_uri)
-    if entry.path == "<none>" then goto continue end
-    entry.ctag = opts._ctag and path.entry_to_ctag(selected[i])
-    local fullpath = entry.path or entry.uri and entry.uri:match("^%a+://(.*)")
-    if not path.is_absolute(fullpath) then
-      fullpath = path.join({ opts.cwd or opts._cwd or uv.cwd(), fullpath })
-    end
-    if vimcmd == "e"
-        and curbuf ~= fullpath
-        and not vim.o.hidden
-        and not vim.o.autowriteall
-        and utils.buffer_is_dirty(nil, false, true) then
-      -- confirm with user when trying to switch
-      -- from a dirty buffer when `:set nohidden`
-      -- abort if the user declines
-      -- save the buffer if requested
-      if utils.save_dialog(nil) then
-        vimcmd = vimcmd .. "!"
-      else
+    (function()
+      -- Lua 5.1 goto compatiblity hack (function wrap)
+      local entry = path.entry_to_file(selected[i], opts, opts.force_uri)
+      if entry.path == "<none>" then return end
+      entry.ctag = opts._ctag and path.entry_to_ctag(selected[i])
+      local fullpath = entry.path or entry.uri and entry.uri:match("^%a+://(.*)")
+      if not path.is_absolute(fullpath) then
+        fullpath = path.join({ opts.cwd or opts._cwd or uv.cwd(), fullpath })
+      end
+      if vimcmd == "e"
+          and curbuf ~= fullpath
+          and not vim.o.hidden
+          and not vim.o.autowriteall
+          and utils.buffer_is_dirty(nil, false, true) then
+        -- confirm with user when trying to switch
+        -- from a dirty buffer when `:set nohidden`
+        -- abort if the user declines
+        -- save the buffer if requested
+        if utils.save_dialog(nil) then
+          vimcmd = vimcmd .. "!"
+        else
+          return
+        end
+      end
+      if vim.fn.exists("&winfixbuf") == 1
+          and vim.wo.winfixbuf
+          and vimcmd == "e"
+          and curbuf ~= fullpath
+      then
+        utils.warn("'winfixbuf' is set for current window, unable to change buffer.")
         return
       end
-    end
-    if utils.__HAS_NVIM_010
-        and vim.wo.winfixbuf
-        and vimcmd == "e"
-        and curbuf ~= fullpath
-    then
-      utils.warn("'winfixbuf' is set for current window, unable to change buffer.")
-      return
-    end
-    -- add current location to jumplist
-    if not is_term then vim.cmd("normal! m`") end
-    -- only change buffer if we need to (issue #122)
-    if vimcmd ~= "e" or not path.equals(curbuf, fullpath) then
-      if entry.path then
-        -- do not run ':<cmd> <file>' for uri entries (#341)
-        local relpath = path.relative_to(entry.path, uv.cwd())
-        if vim.o.autochdir then
-          -- force full paths when `autochdir=true` (#882)
-          relpath = fullpath
+      -- add current location to jumplist
+      if not is_term then vim.cmd("normal! m`") end
+      -- only change buffer if we need to (issue #122)
+      if vimcmd ~= "e" or not path.equals(curbuf, fullpath) then
+        if entry.path then
+          -- do not run ':<cmd> <file>' for uri entries (#341)
+          local relpath = path.relative_to(entry.path, uv.cwd())
+          if vim.o.autochdir then
+            -- force full paths when `autochdir=true` (#882)
+            relpath = fullpath
+          end
+          -- we normalize the path or Windows will fail with directories starting
+          -- with special characters, for example "C:\app\(web)" will be translated
+          -- by neovim to "c:\app(web)" (#1082)
+          local cmd = vimcmd .. " " .. vim.fn.fnameescape(path.normalize(relpath))
+          if pcall_vimcmd then
+            pcall(vim.cmd, cmd)
+          else
+            vim.cmd(cmd)
+          end
+        elseif vimcmd ~= "e" then
+          -- uri entries only execute new buffers (new|vnew|tabnew)
+          vim.cmd(vimcmd)
         end
-        -- we normalize the path or Windows will fail with directories starting
-        -- with special characters, for example "C:\app\(web)" will be translated
-        -- by neovim to "c:\app(web)" (#1082)
-        local cmd = vimcmd .. " " .. vim.fn.fnameescape(path.normalize(relpath))
-        if pcall_vimcmd then
-          pcall(vim.cmd, cmd)
-        else
-          vim.cmd(cmd)
-        end
-      elseif vimcmd ~= "e" then
-        -- uri entries only execute new buffers (new|vnew|tabnew)
-        vim.cmd(vimcmd)
       end
-    end
-    -- Java LSP entries, 'jdt://...' or LSP locations
-    if entry.uri then
-      vim.lsp.util.jump_to_location(entry, "utf-16")
-    elseif entry.ctag then
-      vim.api.nvim_win_set_cursor(0, { 1, 0 })
-      vim.fn.search(entry.ctag, "W")
-    elseif entry.line > 1 or entry.col > 1 then
-      -- make sure we have valid column
-      -- 'nvim-dap' for example sets columns to 0
-      entry.col = entry.col and entry.col > 0 and entry.col or 1
-      pcall(vim.api.nvim_win_set_cursor, 0, { tonumber(entry.line), tonumber(entry.col) - 1 })
-    end
-    if not is_term and not opts.no_action_zz then vim.cmd("norm! zvzz") end
-    ::continue::
+      -- Java LSP entries, 'jdt://...' or LSP locations
+      if entry.uri then
+        vim.lsp.util.jump_to_location(entry, "utf-16")
+      elseif entry.ctag then
+        vim.api.nvim_win_set_cursor(0, { 1, 0 })
+        vim.fn.search(entry.ctag, "W")
+      elseif tonumber(entry.line) or tonumber(entry.col) then
+        -- make sure we have valid column
+        -- 'nvim-dap' for example sets columns to 0
+        entry.col = entry.col and entry.col > 0 and entry.col or 1
+        pcall(vim.api.nvim_win_set_cursor, 0, { tonumber(entry.line), tonumber(entry.col) - 1 })
+      end
+      if not is_term and not opts.no_action_zz then vim.cmd("norm! zvzz") end
+    end)()
   end
 end
 
@@ -287,7 +296,7 @@ M.file_switch = function(selected, opts)
   if not is_term then vim.cmd("normal! m`") end
   local winid = utils.winid_from_tabh(0, bufnr)
   if winid then vim.api.nvim_set_current_win(winid) end
-  if entry.line > 1 or entry.col > 1 then
+  if tonumber(entry.line) or tonumber(entry.col) then
     vim.api.nvim_win_set_cursor(0, { tonumber(entry.line), tonumber(entry.col) - 1 })
   end
   if not is_term and not opts.no_action_zz then vim.cmd("norm! zvzz") end
@@ -323,7 +332,7 @@ M.vimcmd_buf = function(vimcmd, selected, opts)
         return
       end
     end
-    if utils.__HAS_NVIM_010
+    if vim.fn.exists("&winfixbuf") == 1
         and vim.wo.winfixbuf
         and vimcmd == "b"
         and curbuf ~= entry.bufnr
@@ -345,7 +354,7 @@ M.vimcmd_buf = function(vimcmd, selected, opts)
       end
     end
     if vimcmd ~= "bd" and not opts.no_action_set_cursor then
-      if curbuf ~= entry.bufnr or lnum ~= entry.line then
+      if curbuf ~= entry.bufnr or lnum ~= tonumber(entry.line) then
         -- make sure we have valid column
         entry.col = entry.col and entry.col > 0 and entry.col or 1
         vim.api.nvim_win_set_cursor(0, { tonumber(entry.line), tonumber(entry.col) - 1 })
@@ -556,25 +565,34 @@ M.packadd = function(selected)
   end
 end
 
-local function helptags(s)
+local function helptags(s, opts)
   return vim.tbl_map(function(x)
+    local entry = path.entry_to_file(x, opts)
+    if entry and entry.path and package.loaded.lazy then
+      -- make sure the plugin is loaded. This won't do anything if already loaded
+      local lazyConfig = require("lazy.core.config")
+      local _, plugin = path.normalize(entry.path):match("(/([^/]+)/doc/)")
+      if plugin and lazyConfig.plugins[plugin] then
+        require("lazy").load({ plugins = { plugin } })
+      end
+    end
     return x:match("[^%s]+")
   end, s)
 end
 
-M.help = function(selected)
+M.help = function(selected, opts)
   local vimcmd = "help"
-  M.vimcmd(vimcmd, helptags(selected), true)
+  M.vimcmd(vimcmd, helptags(selected, opts), true)
 end
 
-M.help_vert = function(selected)
+M.help_vert = function(selected, opts)
   local vimcmd = "vert help"
-  M.vimcmd(vimcmd, helptags(selected), true)
+  M.vimcmd(vimcmd, helptags(selected, opts), true)
 end
 
-M.help_tab = function(selected)
+M.help_tab = function(selected, opts)
   local vimcmd = "tab help"
-  M.vimcmd(vimcmd, helptags(selected), true)
+  M.vimcmd(vimcmd, helptags(selected, opts), true)
 end
 
 local function mantags(s)
@@ -846,9 +864,13 @@ M.sym_lsym = function(_, opts)
   opts.__ACT_TO({ resume = true })
 end
 
-M.toggle_ignore = function(_, opts)
+M.toggle_flag = function(_, opts)
   local o = { resume = true, cwd = opts.cwd }
-  local flag = opts.toggle_ignore_flag or "--no-ignore"
+  local flag = opts.toggle_flag
+  if not flag then
+    utils.err("'toggle_flag' not set")
+    return
+  end
   if not flag:match("^%s") then
     -- flag must be preceded by whitespace
     flag = " " .. flag
@@ -863,6 +885,16 @@ M.toggle_ignore = function(_, opts)
     o.cmd = string.format("%s%s%s", bin, flag, args)
   end
   opts.__call_fn(o)
+end
+
+M.toggle_ignore = function(_, opts)
+  local flag = opts.toggle_ignore_flag or "--no-ignore"
+  M.toggle_flag(_, vim.tbl_extend("force", opts, { toggle_flag = flag }))
+end
+
+M.toggle_hidden = function(_, opts)
+  local flag = opts.toggle_hidden_flag or "--hidden"
+  M.toggle_flag(_, vim.tbl_extend("force", opts, { toggle_flag = flag }))
 end
 
 M.tmux_buf_set_reg = function(selected, opts)
@@ -931,8 +963,8 @@ M.dap_bp_del = function(selected, opts)
   local dap_bps = require("dap.breakpoints")
   for _, e in ipairs(selected) do
     local entry = path.entry_to_file(e, opts)
-    if entry.bufnr > 0 and entry.line then
-      dap_bps.remove(entry.bufnr, entry.line)
+    if entry.bufnr > 0 and tonumber(entry.line) then
+      dap_bps.remove(entry.bufnr, tonumber(entry.line))
       table.insert(bufnrs, tonumber(entry.bufnr))
     end
   end
