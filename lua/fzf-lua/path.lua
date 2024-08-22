@@ -492,8 +492,9 @@ function M.entry_to_file(entry, opts, force_uri)
         and vim.api.nvim_buf_get_name(tonumber(bufnr)),
     terminal = terminal,
     path     = file,
-    line     = tonumber(line),
-    col      = tonumber(col),
+    line     = tonumber(line) or 0,
+    col      = tonumber(col) or 0,
+    ctag     = opts._ctag and M.entry_to_ctag(stripped) or nil,
   }
 end
 
@@ -556,6 +557,7 @@ function M.keymap_to_entry(str, opts)
     t = true,
   }
   local mode, keymap = string.match(str, "^(.-)│(.-)│")
+  if not mode or not keymap then return {} end
   mode, keymap = vim.trim(mode), vim.trim(keymap)
   mode = valid_modes[mode] and mode or "" -- only valid modes
   local vmap = utils.strsplit(
@@ -567,7 +569,7 @@ function M.keymap_to_entry(str, opts)
       entry = out[i]:match("<.-:%s+(.*)>")
     end
   end
-  return entry and M.entry_to_file(entry, opts) or { mode = mode, key = keymap, vmap = vmap }
+  return entry and M.entry_to_file(entry, opts) or { mode = mode, key = keymap, vmap = vmap } or {}
 end
 
 -- Minimal functionality so we can hijack during `vim.filetype.match`

@@ -120,6 +120,19 @@ local function location_handler(opts, cb, _, result, ctx, _)
       end
     end
   end
+  if opts.unique_line_items then
+    local lines = {}
+    local _result = {}
+    for _, loc in ipairs(result) do
+      local uri = loc.uri or loc.targetUri
+      local range = loc.range or loc.targetSelectionRange
+      if not lines[uri .. range.start.line] then
+        _result[#_result + 1] = loc
+        lines[uri .. range.start.line] = true
+      end
+    end
+    result = _result
+  end
   if opts.ignore_current_line then
     local uri = vim.uri_from_bufnr(core.CTX().bufnr)
     local cursor_line = core.CTX().cursor[1] - 1
@@ -631,7 +644,6 @@ end
 local function fzf_lsp_locations(opts, fn_contents)
   opts = normalize_lsp_opts(opts, "lsp")
   if not opts then return end
-  if opts.force_uri == nil then opts.force_uri = true end
   opts = core.set_fzf_field_index(opts)
   opts = fn_contents(opts)
   if not opts.__contents then
@@ -674,7 +686,6 @@ end
 M.finder = function(opts)
   opts = normalize_lsp_opts(opts, "lsp.finder")
   if not opts then return end
-  if opts.force_uri == nil then opts.force_uri = true end
   local contents = {}
   local lsp_params = opts.lsp_params
   for _, p in ipairs(opts.providers) do
@@ -765,7 +776,6 @@ M.document_symbols = function(opts)
   end
   opts = core.set_header(opts, opts.headers or { "regex_filter" })
   opts = core.set_fzf_field_index(opts)
-  if opts.force_uri == nil then opts.force_uri = true end
   if not opts.fzf_opts or opts.fzf_opts["--with-nth"] == nil then
     -- our delims are {nbsp,:} make sure entry has no icons
     -- "{nbsp}file:line:col:" and hide the last 4 fields
@@ -796,7 +806,6 @@ M.workspace_symbols = function(opts)
   opts = core.set_header(opts, opts.headers or
     { "actions", "cwd", "lsp_query", "regex_filter" })
   opts = core.set_fzf_field_index(opts)
-  if opts.force_uri == nil then opts.force_uri = true end
   opts = gen_lsp_contents(opts)
   if not opts.__contents then
     core.__CTX = nil
@@ -865,12 +874,11 @@ M.live_workspace_symbols = function(opts)
 
   opts = core.set_header(opts, opts.headers or { "actions", "cwd", "regex_filter" })
   opts = core.set_fzf_field_index(opts)
-  if opts.force_uri == nil then opts.force_uri = true end
   if opts.symbol_style or opts.symbol_fmt then
     opts.fn_pre_fzf = function() gen_sym2style_map(opts) end
     opts.fn_post_fzf = function() M._sym2style = nil end
   end
-  core.fzf_exec(nil, opts)
+  return core.fzf_exec(nil, opts)
 end
 
 -- Converts 'vim.diagnostic.get' to legacy style 'get_line_diagnostics()'
@@ -948,7 +956,7 @@ M.code_actions = function(opts)
   end
 
   opts.actions = opts.actions or {}
-  opts.actions.default = nil
+  opts.actions.enter = nil
   -- only dereg if we aren't registered
   if not registered then
     opts.post_action_cb = function()
@@ -976,7 +984,7 @@ local function wrap_fn(key, fn)
     end
 
     -- Call the original method
-    fn(opts)
+    return fn(opts)
   end
 end
 

@@ -190,7 +190,7 @@ M.fzf_exec = function(contents, opts)
     opts = M.setup_fzf_interactive_wrap(opts)
     contents = opts.__fzf_init_cmd
   end
-  return M.fzf_wrap(opts, contents)()
+  return M.fzf_wrap(opts, contents)
 end
 
 ---@param contents fun(query: string): string|string[]|function
@@ -203,11 +203,15 @@ M.fzf_live = function(contents, opts)
 end
 
 M.fzf_resume = function(opts)
+  -- First try to unhide the window
+  if win.unhide() then return end
   if not config.__resume_data or not config.__resume_data.opts then
     utils.info("No resume data available.")
     return
   end
   opts = vim.tbl_deep_extend("force", config.__resume_data.opts, opts or {})
+  opts = M.set_header(opts, opts.headers or {})
+  opts.cwd = opts.cwd and vim.fn.expand(opts.cwd) or nil
   opts.__resuming = true
   M.fzf_exec(config.__resume_data.contents, opts)
 end
@@ -215,10 +219,13 @@ end
 ---@param opts table
 ---@param contents content
 ---@param fn_selected function?
----@return function
+---@return thread
 M.fzf_wrap = function(opts, contents, fn_selected)
   opts = opts or {}
-  return coroutine.wrap(function()
+  local _co
+  coroutine.wrap(function()
+    _co = coroutine.running()
+    if type(opts.cb_co) == "function" then opts.cb_co(_co) end
     opts.fn_selected = opts.fn_selected or fn_selected
     local selected = M.fzf(contents, opts)
     if opts.fn_selected then
@@ -235,7 +242,8 @@ M.fzf_wrap = function(opts, contents, fn_selected)
         utils.err("fn_selected threw an error: " .. debug.traceback(err, 1))
       end)
     end
-  end)
+  end)()
+  return _co
 end
 
 -- conditionally update the context if fzf-lua
@@ -243,12 +251,17 @@ end
 M.CTX = function(includeBuflist)
   -- save caller win/buf context, ignore when fzf
   -- is already open (actions.sym_lsym|grep_lgrep)
-  if not M.__CTX or
+  local winobj = utils.fzf_winobj()
+  if not M.__CTX
       -- when called from the LSP module in "sync" mode when no results are found
       -- the fzf window won't open (e.g. "No references found") and the context is
       -- never cleared. The below condition validates the source window when the
       -- UI is not open (#907)
-      (not utils.fzf_winobj() and M.__CTX.bufnr ~= vim.api.nvim_get_current_buf()) then
+      or (not winobj and M.__CTX.bufnr ~= vim.api.nvim_get_current_buf())
+      -- we should never get here when fzf process is hidden unless the user requested
+      -- not to resume or a different picker, i.e. hide files and open buffers
+      or winobj and winobj:hidden()
+  then
     M.__CTX = {
       mode = vim.api.nvim_get_mode().mode,
       bufnr = vim.api.nvim_get_current_buf(),
@@ -259,6 +272,14 @@ M.CTX = function(includeBuflist)
       tabh = vim.api.nvim_win_get_tabpage(0),
       cursor = vim.api.nvim_win_get_cursor(0),
       line = vim.api.nvim_get_current_line(),
+      curtab_wins = (function()
+        local ret = {}
+        local wins = vim.api.nvim_tabpage_list_wins(0)
+        for _, w in ipairs(wins) do
+          ret[tostring(w)] = true
+        end
+        return ret
+      end)()
     }
   end
   -- perhaps a min impact optimization but since only
@@ -302,9 +323,9 @@ M.fzf = function(contents, opts)
   opts.actions = opts.actions or {}
   opts.keymap = opts.keymap or {}
   opts.keymap.fzf = opts.keymap.fzf or {}
-  for _, k in ipairs({ "ctrl-c", "ctrl-q", "esc" }) do
-    if opts.actions[k] == nil and
-        (opts.keymap.fzf[k] == nil or opts.keymap.fzf[k] == "abort") then
+  for _, k in ipairs({ "ctrl-c", "ctrl-q", "esc", "enter" }) do
+    if opts.actions[k] == nil and (opts.keymap.fzf[k] == nil or opts.keymap.fzf[k] == "abort")
+    then
       opts.actions[k] = actions.dummy_abort
     end
   end
@@ -431,6 +452,8 @@ M.fzf = function(contents, opts)
   if type(opts._get_pid == "function") then
     libuv.process_kill(opts._get_pid())
   end
+  -- If a hidden process was killed by [re-]starting a new picker do nothing
+  if fzf_win:was_hidden() then return end
   -- This was added by 'resume': when '--print-query' is specified
   -- we are guaranteed to have the query in the first line, save&remove it
   if selected and #selected > 0 then
@@ -968,7 +991,10 @@ M.set_header = function(opts, hdr_tbl)
         if opts.no_header_i then return end
         local defs = M.ACTION_DEFINITIONS
         local ret = {}
-        for k, v in pairs(opts.actions) do
+        local sorted = vim.tbl_keys(opts.actions or {})
+        table.sort(sorted)
+        for _, k in ipairs(sorted) do
+          local v = opts.actions[k]
           local action = type(v) == "function" and v or type(v) == "table" and (v.fn or v[1])
           local def, to = nil, type(v) == "table" and v.header
           if not to and type(action) == "function" and defs[action] then

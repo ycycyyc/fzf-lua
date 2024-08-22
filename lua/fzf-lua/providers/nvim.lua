@@ -13,7 +13,27 @@ M.commands = function(opts)
 
   local global_commands = vim.api.nvim_get_commands {}
   local buf_commands = vim.api.nvim_buf_get_commands(0, {})
-  local commands = vim.tbl_extend("force", {}, global_commands, buf_commands)
+
+  local builtin_commands = {}
+  -- parse help doc to get builtin commands and descriptions
+  if opts.include_builtin then
+    local help = vim.fn.globpath(vim.o.rtp, "doc/index.txt")
+    if uv.fs_stat(help) then
+      local cmd, desc
+      for line in utils.read_file(help):gmatch("[^\n]*\n") do
+        if line:match("^|:[^|]") then
+          if cmd then builtin_commands[cmd] = desc end
+          cmd, desc = line:match("^|:(%S+)|%s*%S+%s*(.*%S)")
+        elseif cmd then -- found
+          if line:match("^%s%+%S") then desc = desc .. (line:match("^%s*(.*%S)") or "") end
+          if line:match("^%s*$") then break end
+        end
+      end
+      if cmd then builtin_commands[cmd] = desc end
+    end
+  end
+
+  local commands = vim.tbl_extend("force", {}, global_commands, buf_commands, builtin_commands)
 
   local entries = {}
 
@@ -26,18 +46,21 @@ M.commands = function(opts)
     for i = #history, #history - 3, -1 do
       local cmd = history[i]:match("%d+%s+([^%s]+)")
       if buf_commands[cmd] then
-        table.insert(entries, utils.ansi_codes.green(cmd))
+        table.insert(entries, cmd)
         buf_commands[cmd] = nil
       end
       if global_commands[cmd] then
-        table.insert(entries, utils.ansi_codes.magenta(cmd))
+        table.insert(entries, cmd)
         global_commands[cmd] = nil
+      end
+      if builtin_commands[cmd] then
+        table.insert(entries, cmd)
       end
     end
   end
 
   for k, _ in pairs(global_commands) do
-    table.insert(entries, utils.ansi_codes.magenta(k))
+    table.insert(entries, utils.ansi_codes.blue(k))
   end
 
   for k, v in pairs(buf_commands) do
@@ -46,8 +69,13 @@ M.commands = function(opts)
     end
   end
 
+  -- Sort before adding "builtin" so they don't end up atop the list
   if not opts.sort_lastused then
     table.sort(entries, function(a, b) return a < b end)
+  end
+
+  for k, _ in pairs(builtin_commands) do
+    table.insert(entries, utils.ansi_codes.magenta(k))
   end
 
   opts.preview = function(args)

@@ -676,18 +676,22 @@ function Previewer.buffer_or_file:populate_preview_buf(entry_str)
     end
     do
       local lines = nil
-      -- make sure the file is readable (or bad entry.path)
-      local fs_stat = uv.fs_stat(entry.path)
-      if not entry.path or not fs_stat then
-        lines = { string.format("Unable to stat file %s", entry.path) }
-      elseif fs_stat.size > 0 and utils.perl_file_is_binary(entry.path) then
-        lines = { "Preview is not supported for binary files." }
-      elseif tonumber(self.limit_b) > 0 and fs_stat.size > self.limit_b then
-        lines = {
-          ("Preview file size limit (>%dMB) reached, file size %dMB.")
-              :format(self.limit_b / (1024 * 1024), fs_stat.size / (1024 * 1024)),
-          -- "(configured via 'previewers.builtin.limit_b')"
-        }
+      if entry.path:match("^%[DEBUG]") then
+        lines = { tostring(entry.path:gsub("^%[DEBUG]", "")) }
+      else
+        -- make sure the file is readable (or bad entry.path)
+        local fs_stat = uv.fs_stat(entry.path)
+        if not entry.path or not fs_stat then
+          lines = { string.format("Unable to stat file %s", entry.path) }
+        elseif fs_stat.size > 0 and utils.perl_file_is_binary(entry.path) then
+          lines = { "Preview is not supported for binary files." }
+        elseif tonumber(self.limit_b) > 0 and fs_stat.size > self.limit_b then
+          lines = {
+            ("Preview file size limit (>%dMB) reached, file size %dMB.")
+                :format(self.limit_b / (1024 * 1024), fs_stat.size / (1024 * 1024)),
+            -- "(configured via 'previewers.builtin.limit_b')"
+          }
+        end
       end
       if lines then
         pcall(vim.api.nvim_buf_set_lines, tmpbuf, 0, -1, false, lines)
@@ -861,6 +865,9 @@ function Previewer.buffer_or_file:set_cursor_hl(entry)
   local mgrep = require("fzf-lua.providers.grep")
   local regex = self.opts.__ACT_TO == mgrep.grep and self.opts._last_query
       or self.opts.__ACT_TO == mgrep.live_grep and self.opts.search or nil
+  if regex and self.opts.rg_glob and self.opts.glob_separator then
+    regex = require("fzf-lua.make_entry").glob_parse(regex, self.opts)
+  end
 
   pcall(vim.api.nvim_win_call, self.win.preview_winid, function()
     local lnum, col = tonumber(entry.line), tonumber(entry.col) or 0
@@ -904,10 +911,14 @@ function Previewer.buffer_or_file:update_border(entry)
   if self.title then
     local filepath = entry.path
     if filepath then
-      if self.opts.cwd then
-        filepath = path.relative_to(entry.path, self.opts.cwd)
+      if filepath:match("^%[DEBUG]") then
+        filepath = "[DEBUG]"
+      else
+        if self.opts.cwd then
+          filepath = path.relative_to(entry.path, self.opts.cwd)
+        end
+        filepath = path.HOME_to_tilde(filepath)
       end
-      filepath = path.HOME_to_tilde(filepath)
     end
     local title = filepath or entry.uri or entry.bufname
     -- was transform function defined?
@@ -968,6 +979,9 @@ end
 
 function Previewer.help_tags:parse_entry(entry_str)
   local tag = entry_str:match("^[^%s]+")
+  if not tag then
+    return {}
+  end
   local vimdoc = entry_str:match(string.format("[^%s]+$", utils.nbsp))
   return {
     htag = tag,
@@ -1019,6 +1033,7 @@ function Previewer.man_pages:new(o, opts, fzf_win)
   Previewer.man_pages.super.new(self, o, opts, fzf_win)
   self.filetype = "man"
   self.cmd = o.cmd or "man -c %s | col -bx"
+  self.cmd = type(self.cmd) == "function" and self.cmd() or self.cmd
   return self
 end
 
@@ -1049,6 +1064,7 @@ end
 function Previewer.marks:parse_entry(entry_str)
   local bufnr = nil
   local mark, lnum, col, filepath = entry_str:match("(.)%s+(%d+)%s+(%d+)%s+(.*)")
+  if not mark then return {} end
   -- try to acquire position from sending buffer
   -- if this succeeds (line>0) the mark is inside
   local pos = vim.api.nvim_buf_get_mark(self.win.src_bufnr, mark)
@@ -1108,16 +1124,6 @@ Previewer.tags = Previewer.buffer_or_file:extend()
 function Previewer.tags:new(o, opts, fzf_win)
   Previewer.tags.super.new(self, o, opts, fzf_win)
   return self
-end
-
-function Previewer.tags:parse_entry(entry_str)
-  -- first parse as normal entry
-  -- must use 'super.' and send self as 1st arg
-  -- or the ':' syntactic sugar will send super's
-  -- self which doesn't have self.opts
-  local entry = self.super.parse_entry(self, entry_str)
-  entry.ctag = path.entry_to_ctag(entry_str)
-  return entry
 end
 
 function Previewer.tags:set_cursor_hl(entry)

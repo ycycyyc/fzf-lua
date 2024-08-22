@@ -209,7 +209,9 @@ function M.rg_escape(str)
 end
 
 function M.regex_to_magic(str)
-  return [[\v]] .. str
+  -- Convert regex to "very magic" pattern, basically a regex
+  -- with special meaning for "=&<>", `:help /magic`
+  return [[\v]] .. str:gsub("[=&<>]", function(x) return [[\]] .. x end)
 end
 
 function M.sk_escape(str)
@@ -726,7 +728,10 @@ function M.strip_ansi_coloring(str)
   -- 1. ^[[34m
   -- 2. ^[[0;34m
   -- 3. ^[[m
-  return str:gsub("%[[%d;]-m", "")
+  -- NOTE: didn't work with grep's "^[[K"
+  -- return str:gsub("%[[%d;]-m", "")
+  -- https://stackoverflow.com/a/49209650/368691
+  return str:gsub("[\27\155][][()#;?%d]*[A-PRZcf-ntqry=><~]", "")
 end
 
 function M.ansi_escseq_len(str)
