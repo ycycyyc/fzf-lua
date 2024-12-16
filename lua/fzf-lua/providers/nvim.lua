@@ -152,6 +152,11 @@ M.jumps = function(opts)
       text))
   end
 
+  if utils.tbl_isempty(entries) then
+    utils.info(("%s list is empty."):format(opts.h1 or "jump"))
+    return
+  end
+
   table.insert(entries, 1,
     string.format("%6s %s  %s %s", opts.h1 or "jump", "line", "col", "file/text"))
 
@@ -315,7 +320,6 @@ M.keymaps = function(opts)
   opts = config.normalize_opts(opts, "keymaps")
   if not opts then return end
 
-  local formatter = "%s │ %-14s │ %-33s │ %s"
   local key_modes = opts.modes or { "n", "i", "c", "v", "t" }
   local modes = {
     n = "blue",
@@ -325,9 +329,26 @@ M.keymaps = function(opts)
     t = "green"
   }
   local keymaps = {}
+  local separator = "│"
+  local fields = { "mode", "lhs", "desc", "rhs" }
+  local field_fmt = { mode = "%s", lhs = "%-14s", desc = "%-33s", rhs = "%s" }
 
+  if opts.show_desc == false then field_fmt.desc = nil end
+  if opts.show_details == false then field_fmt.rhs = nil end
 
-  local add_keymap = function(keymap)
+  local format = function(info)
+    info.desc = string.sub(info.desc or "", 1, 33)
+    local ret
+    for _, f in ipairs(fields) do
+      if field_fmt[f] then
+        ret = string.format("%s%s" .. field_fmt[f], ret or "",
+          ret and string.format(" %s ", separator) or "", info[f] or "")
+      end
+    end
+    return ret
+  end
+
+  local function add_keymap(keymap)
     -- ignore dummy mappings
     if type(keymap.rhs) == "string" and #keymap.rhs == 0 then
       return
@@ -344,12 +365,13 @@ M.keymaps = function(opts)
       end
     end
 
-    keymap.str = string.format(formatter,
-      utils.ansi_codes[modes[keymap.mode] or "blue"](keymap.mode),
-      keymap.lhs:gsub("%s", "<Space>"),
+    keymap.str = format({
+      mode = utils.ansi_codes[modes[keymap.mode] or "blue"](keymap.mode),
+      lhs  = keymap.lhs:gsub("%s", "<Space>"),
       -- desc can be a multi-line string, normalize it
-      string.sub(string.gsub(keymap.desc or "", "\n%s+", "\r") or "", 1, 30),
-      (keymap.rhs or string.format("%s", keymap.callback)))
+      desc = keymap.desc and string.gsub(keymap.desc, "\n%s+", "\r"),
+      rhs  = keymap.rhs or string.format("%s", keymap.callback)
+    })
 
     local k = string.format("[%s:%s:%s]", keymap.buffer, keymap.mode, keymap.lhs)
     keymaps[k] = keymap
@@ -376,7 +398,7 @@ M.keymaps = function(opts)
   -- sort alphabetically
   table.sort(entries)
 
-  local header_str = string.format(formatter, "m", "keymap", "description", "detail")
+  local header_str = format({ mode = "m", lhs = "keymap", desc = "description", rhs = "detail" })
   table.insert(entries, 1, header_str)
 
   core.fzf_exec(entries, opts)
@@ -402,6 +424,15 @@ M.filetypes = function(opts)
   local entries = vim.fn.getcompletion("", "filetype")
   if utils.tbl_isempty(entries) then return end
 
+  if opts.file_icons then
+    entries = vim.tbl_map(function(ft)
+      local buficon, hl = devicons.icon_by_ft(ft)
+      if not buficon then buficon = " " end
+      if hl then buficon = utils.ansi_from_hl(hl, buficon) end
+      return string.format("%s%s%s", buficon, utils.nbsp, ft)
+    end, entries)
+  end
+
   core.fzf_exec(entries, opts)
 end
 
@@ -410,7 +441,6 @@ M.packadd = function(opts)
   if not opts then return end
 
   local entries = vim.fn.getcompletion("", "packadd")
-
   if utils.tbl_isempty(entries) then return end
 
   core.fzf_exec(entries, opts)

@@ -1,6 +1,7 @@
 local uv = vim.uv or vim.loop
 local path = require "fzf-lua.path"
 local utils = require "fzf-lua.utils"
+local libuv = require "fzf-lua.libuv"
 local actions = require "fzf-lua.actions"
 local devicons = require "fzf-lua.devicons"
 
@@ -237,7 +238,7 @@ function M.normalize_opts(opts, globals, __resume_key)
 
   -- fzf.vim's `g:fzf_history_dir` (#1127)
   if vim.g.fzf_history_dir and opts.fzf_opts["--history"] == nil then
-    local histdir = vim.fn.expand(vim.g.fzf_history_dir)
+    local histdir = libuv.expand(vim.g.fzf_history_dir)
     if vim.fn.isdirectory(histdir) == 0 then
       pcall(vim.fn.mkdir, histdir)
     end
@@ -261,7 +262,7 @@ function M.normalize_opts(opts, globals, __resume_key)
   -- Merge `winopts` with outputs from `winopts_fn`
   local winopts_fn = opts.winopts_fn or M.globals.winopts_fn
   if type(winopts_fn) == "function" then
-    opts.winopts = vim.tbl_deep_extend("force", opts.winopts, winopts_fn() or {})
+    opts.winopts = vim.tbl_deep_extend("force", opts.winopts, winopts_fn(opts) or {})
   end
 
   -- Merge arrays from globals|defaults, can't use 'vim.tbl_xxx'
@@ -434,7 +435,9 @@ function M.normalize_opts(opts, globals, __resume_key)
   if opts.cwd and #opts.cwd > 0 then
     -- NOTE: on Windows, `expand` will replace all backslashes with forward slashes
     -- i.e. C:/Users -> c:\Users
-    opts.cwd = vim.fn.expand(opts.cwd)
+    -- Also reduces double backslashes to a single backslash, we therefore double
+    -- the backslashes prior to expanding (#1429)
+    opts.cwd = libuv.expand(opts.cwd)
     if not uv.fs_stat(opts.cwd) then
       utils.warn(("Unable to access '%s', removing 'cwd' option."):format(opts.cwd))
       opts.cwd = nil
@@ -464,7 +467,7 @@ function M.normalize_opts(opts, globals, __resume_key)
   end
 
   opts.fzf_bin = opts.fzf_bin or M.globals.fzf_bin
-  opts.fzf_bin = opts.fzf_bin and vim.fn.expand(opts.fzf_bin) or nil
+  opts.fzf_bin = opts.fzf_bin and libuv.expand(opts.fzf_bin) or nil
   if not opts.fzf_bin or
       not executable(opts.fzf_bin, utils.warn, "fallback to 'fzf'.") then
     -- default|fallback to fzf
@@ -505,6 +508,14 @@ function M.normalize_opts(opts, globals, __resume_key)
       opts.fzf_opts = opts.fzf_opts or {}
       opts.fzf_opts["--border"] = false
     end
+  else
+    local SK_VERSION, rc, err = utils.sk_version(opts)
+    opts.__SK_VERSION = SK_VERSION
+    if not opts.__SK_VERSION then
+      utils.err(string.format(
+        "'sk --version' failed with error %s: %s", rc, err))
+      return nil
+    end
   end
 
   if opts.__FZF_VERSION and opts.__FZF_VERSION >= 0.53
@@ -518,12 +529,22 @@ function M.normalize_opts(opts, globals, __resume_key)
     opts.multiline = nil
   end
 
-  -- are we using fzf-tmux, if so get available columns
-  opts._is_fzf_tmux = vim.env.TMUX and opts.fzf_bin:match("fzf%-tmux$")
+  -- Are we using fzf-tmux? if so get available columns
+  opts._is_fzf_tmux = vim.env.TMUX
+      -- pre fzf v0.53 uses the fzf-tmux script
+      and opts.fzf_bin:match("fzf%-tmux$") and 1
+      -- fzf v0.53 added native tmux integration
+      or opts.__FZF_VERSION and opts.__FZF_VERSION >= 0.53 and opts.fzf_opts["--tmux"] and 2
+      -- skim v0.15.5 added native tmux integration
+      or opts.__SK_VERSION and opts.__SK_VERSION >= 0.155 and opts.fzf_opts["--tmux"] and 2
   if opts._is_fzf_tmux then
     local out = utils.io_system({ "tmux", "display-message", "-p", "#{window_width}" })
     opts._tmux_columns = tonumber(out:match("%d+"))
     opts.winopts.split = nil
+    if opts._is_fzf_tmux == 2 then
+      -- native tmux integration is implemented using tmux popups
+      opts._is_fzf_tmux_popup = true
+    end
   end
 
   -- refresh highlights if background/colorscheme changed (#1092)
@@ -669,6 +690,7 @@ M._action_to_helpstr = {
   [actions.git_buf_tabedit]     = "git-buffer-tabedit",
   [actions.git_buf_split]       = "git-buffer-split",
   [actions.git_buf_vsplit]      = "git-buffer-vsplit",
+  [actions.git_goto_line]       = "git-goto-line",
   [actions.git_yank_commit]     = "git-yank-commit",
   [actions.arg_add]             = "arg-list-add",
   [actions.arg_del]             = "arg-list-delete",

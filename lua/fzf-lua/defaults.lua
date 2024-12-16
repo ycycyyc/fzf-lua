@@ -57,12 +57,11 @@ M.defaults                      = {
       vertical     = "down:45%",
       horizontal   = "right:60%",
       layout       = "flex",
-      flip_columns = 120,
+      flip_columns = 100,
       title        = true,
       title_pos    = "center",
       scrollbar    = "border",
       scrolloff    = "-2",
-      scrollchars  = { "█", "" },
       -- default preview delay 100ms, same as native fzf preview
       -- https://github.com/junegunn/fzf/issues/2417#issuecomment-809886535
       delay        = 100,
@@ -95,6 +94,10 @@ M.defaults                      = {
       ["<F4>"]       = "toggle-preview",
       ["<F5>"]       = "toggle-preview-ccw",
       ["<F6>"]       = "toggle-preview-cw",
+      ["<F7>"]       = "toggle-preview-ts-ctx",
+      ["<F8>"]       = "preview-ts-ctx-dec",
+      ["<F9>"]       = "preview-ts-ctx-inc",
+      ["<S-Left>"]   = "preview-reset",
       ["<S-down>"]   = "preview-page-down",
       ["<S-up>"]     = "preview-page-up",
       ["<M-S-down>"] = "preview-down",
@@ -108,8 +111,8 @@ M.defaults                      = {
       ["ctrl-a"]         = "beginning-of-line",
       ["ctrl-e"]         = "end-of-line",
       ["alt-a"]          = "toggle-all",
-      ["alt-g"]          = "last",
-      ["alt-G"]          = "first",
+      ["alt-g"]          = "first",
+      ["alt-G"]          = "last",
       -- Only valid with fzf previewers (bat/cat/git/etc)
       ["f3"]             = "toggle-preview-wrap",
       ["f4"]             = "toggle-preview",
@@ -196,9 +199,16 @@ M.defaults                      = {
       syntax_limit_l    = 0,
       syntax_limit_b    = 1024 * 1024,      -- 1MB
       limit_b           = 1024 * 1024 * 10, -- 10MB
-      treesitter        = { enable = true, disable = {} },
+      treesitter        = {
+        enable = true,
+        disable = {},
+        -- nvim-treesitter-context config options
+        -- https://github.com/nvim-treesitter/nvim-treesitter-context
+        context = { max_lines = 1, trim_scope = "inner" }
+      },
       ueberzug_scaler   = "cover",
       title_fnamemodify = function(s) return path.tail(s) end,
+      render_markdown   = { enable = true, filetypes = { ["markdown"] = true } },
       _ctor             = previewers.builtin.buffer_or_file,
     },
     codeaction = {
@@ -397,6 +407,21 @@ M.defaults.git                  = {
     preview_pager = M._preview_pager_fn,
     actions       = {
       ["enter"]  = actions.git_buf_edit,
+      ["ctrl-s"] = actions.git_buf_split,
+      ["ctrl-v"] = actions.git_buf_vsplit,
+      ["ctrl-t"] = actions.git_buf_tabedit,
+      ["ctrl-y"] = { fn = actions.git_yank_commit, exec_silent = true },
+    },
+    fzf_opts      = { ["--no-multi"] = true },
+    _multiline    = false,
+  },
+  blame = {
+    prompt        = "Blame> ",
+    cmd           = [[git blame --color-lines {file}]],
+    preview       = "git show --color {1} -- {file}",
+    preview_pager = M._preview_pager_fn,
+    actions       = {
+      ["enter"]  = actions.git_goto_line,
       ["ctrl-s"] = actions.git_buf_split,
       ["ctrl-v"] = actions.git_buf_vsplit,
       ["ctrl-t"] = actions.git_buf_tabedit,
@@ -642,6 +667,23 @@ M.defaults.blines               = {
   _cached_hls      = { "buf_name", "buf_nr", "path_linenr" },
 }
 
+M.defaults.treesitter           = {
+  previewer        = M._default_previewer_fn,
+  prompt           = "Treesitter> ",
+  file_icons       = false,
+  color_icons      = false,
+  fzf_opts         = {
+    ["--multi"]     = true,
+    ["--delimiter"] = "[:]",
+    ["--with-nth"]  = "2..",
+  },
+  line_field_index = "{2}",
+  _actions         = function()
+    return M.globals.actions.buffers or M.globals.actions.files
+  end,
+  _cached_hls      = { "buf_name", "buf_nr", "path_linenr", "path_colnr" },
+}
+
 M.defaults.tags                 = {
   previewer    = { _ctor = previewers.builtin.tags },
   prompt       = "Tags> ",
@@ -765,7 +807,7 @@ M.defaults.lsp                  = {
   fzf_opts         = { ["--multi"] = true },
   _actions         = function() return M.globals.actions.files end,
   _cached_hls      = { "path_colnr", "path_linenr" },
-  -- Signals actions to use uri triggering the use of `lsp.util.jump_to_location`
+  -- Signals actions to use uri triggering the use of `lsp.util.show_document`
   _uri             = true,
 }
 
@@ -1008,6 +1050,8 @@ M.defaults.keymaps              = {
   winopts         = { preview = { layout = "vertical" } },
   fzf_opts        = { ["--tiebreak"] = "index", ["--no-multi"] = true },
   ignore_patterns = { "^<SNR>", "^<Plug>" },
+  show_desc       = true,
+  show_details    = true,
   actions         = {
     ["enter"]  = actions.keymap_apply,
     ["ctrl-s"] = actions.keymap_split,
@@ -1018,16 +1062,22 @@ M.defaults.keymaps              = {
 
 M.defaults.spell_suggest        = {
   prompt  = "Spelling Suggestions> ",
+  winopts = {
+    relative = "cursor",
+    row      = 1,
+    col      = 0,
+    height   = 0.40,
+    width    = 0.30,
+  },
   actions = {
     ["enter"] = actions.spell_apply,
   },
 }
 
 M.defaults.filetypes            = {
-  prompt  = "Filetypes> ",
-  actions = {
-    ["enter"] = actions.set_filetype,
-  },
+  prompt     = "Filetypes> ",
+  file_icons = false,
+  actions    = { ["enter"] = actions.set_filetype },
 }
 
 M.defaults.packadd              = {

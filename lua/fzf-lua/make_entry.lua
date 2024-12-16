@@ -400,7 +400,8 @@ M.file = function(x, opts)
   else
     ret[#ret + 1] = file_is_ansi > 0
         -- filename is ansi escape colored, replace the inner string (#819)
-        and file_part:gsub(utils.lua_regex_escape(stripped_filepath), filepath)
+        -- escape `%` in path, since `string.gsub` also use it in target (#1443)
+        and file_part:gsub(utils.lua_regex_escape(stripped_filepath), (filepath:gsub("%%", "%%%%")))
         or filepath
   end
   -- multiline is only enabled with grep-like output PATH:LINE:COL:
@@ -438,6 +439,11 @@ M.tag = function(x, opts)
   -- from rg/grep output when using `tags_grep_xxx`
   local align = utils.has_ansi_coloring(name) and 47 or 30
   local line, tag = text:match("(%d-);?(/.*/)")
+  if not tag then
+    -- lines with a tag located solely by line number contain nothing but the
+    -- number at this point (e.g. using "ctags -R --excmd=number")
+    line = text:match("%d+")
+  end
   line = line and #line > 0 and tonumber(line)
   return string.format("%-" .. tostring(align) .. "s%s%s%s: %s",
     name,

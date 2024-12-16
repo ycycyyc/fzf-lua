@@ -1,6 +1,7 @@
 local uv = vim.uv or vim.loop
 local utils = require "fzf-lua.utils"
 local path = require "fzf-lua.path"
+local libuv = require "fzf-lua.libuv"
 
 local M = {}
 
@@ -31,6 +32,14 @@ M.expect = function(actions, opts)
           v.prefix and "+" or "",
           v.prefix and v.prefix:gsub("accept$", ""):gsub("%+$", "") or ""
         ))
+      elseif opts.__SK_VERSION and opts.__SK_VERSION >= 0.14 then
+        -- sk 0.14 deprecated `--expect`, instead `accept(<key>)` should be used
+        -- skim does not yet support case sensitive alt-shift binds, they are ignored
+        -- if k:match("^alt%-%u") then return end
+        if type(v.prefix) == "string" and not v.prefix:match("%+$") then
+          v.prefix = v.prefix .. "+"
+        end
+        table.insert(binds, string.format("%s:%saccept(%s)", k, v.prefix or "", k))
       elseif k ~= "enter" then
         -- Skim does not support case sensitive alt-shift binds
         -- which are supported with fzf since version 0.25
@@ -128,9 +137,11 @@ M.vimcmd_entry = function(_vimcmd, selected, opts, pcall_vimcmd)
       -- Adjust "<auto>" edits based on entry being buffer or filename
       local vimcmd = _vimcmd:gsub("<auto>", entry.bufnr and entry.bufname and "b" or "e")
       -- Do not execute "edit" commands if we already have the same buffer/file open
-      -- or if we are dealing with a URI as it's open with `vim.lsp.util.jump_to_location`
-      if vimcmd == "e" and (entry.uri or path.equals(fullpath, opts.__CTX.bname))
-          or vimcmd == "b" and entry.bufnr and entry.bufnr == opts.__CTX.bufnr
+      -- or if we are dealing with a URI as it's open with `vim.lsp.util.show_document`
+      -- opts.__CTX isn't guaranteed by API users (#1414)
+      local CTX = opts.__CTX or utils.CTX()
+      if vimcmd == "e" and (entry.uri or path.equals(fullpath, CTX.bname))
+          or vimcmd == "b" and entry.bufnr and entry.bufnr == CTX.bufnr
       then
         vimcmd = nil
       end
@@ -195,11 +206,11 @@ M.vimcmd_entry = function(_vimcmd, selected, opts, pcall_vimcmd)
       if entry.uri then
         if utils.is_term_bufname(entry.uri) then
           -- nvim_exec2(): Vim(normal):Can't re-enter normal mode from terminal mode
-          pcall(vim.lsp.util.jump_to_location, entry, "utf-16")
+          pcall(utils.jump_to_location, entry, "utf-16")
         else
-          vim.lsp.util.jump_to_location(entry, "utf-16")
+          utils.jump_to_location(entry, "utf-16")
         end
-      elseif entry.ctag then
+      elseif entry.ctag and entry.line == 0 then
         vim.api.nvim_win_set_cursor(0, { 1, 0 })
         vim.fn.search(entry.ctag, "W")
       elseif not opts.no_action_set_cursor and entry.line > 0 or entry.col > 0 then
@@ -252,7 +263,7 @@ local sel_to_qf = function(selected, opts, is_loclist)
     table.insert(qf_list, {
       bufnr = file.bufnr,
       filename = file.bufname or file.path or file.uri,
-      lnum = file.line,
+      lnum = file.line > 0 and file.line or 1,
       col = file.col,
       text = text,
     })
@@ -316,6 +327,7 @@ M.file_edit_or_qf = function(selected, opts)
 end
 
 M.file_switch = function(selected, opts)
+  if not selected[1] then return false end
   -- If called from `:FzfLua tabs` switch to requested tab/win
   local tabh, winid = selected[1]:match("(%d+):(%d+)%)")
   if tabh and winid then
@@ -325,7 +337,7 @@ M.file_switch = function(selected, opts)
     end
     return true
   end
-  local entry = path.entry_to_file(selected[1])
+  local entry = path.entry_to_file(selected[1], opts)
   if not entry.bufnr then
     -- Search for the current entry's filepath in buffer list
     local fullpath = entry.path
@@ -480,7 +492,7 @@ M.goto_jump = function(selected, opts)
     end
   else
     local _, lnum, col, filepath = selected[1]:match("(%d+)%s+(%d+)%s+(%d+)%s+(.*)")
-    local ok, res = pcall(vim.fn.expand, filepath)
+    local ok, res = pcall(libuv.expand, filepath)
     if not ok then
       filepath = ""
     else
@@ -518,7 +530,7 @@ M.spell_apply = function(selected)
 end
 
 M.set_filetype = function(selected)
-  vim.bo.filetype = selected[1]
+  vim.bo.filetype = selected[1]:match("[^" .. utils.nbsp .. "]+$")
 end
 
 M.packadd = function(selected)
@@ -793,6 +805,13 @@ M.git_buf_vsplit = function(selected, opts)
   M.git_buf_edit(selected, opts)
 end
 
+M.git_goto_line = function(selected, _)
+  local line = selected[1] and selected[1]:match("^.-(%d+)%)")
+  if tonumber(line) then
+    vim.api.nvim_win_set_cursor(0, { tonumber(line), 0 })
+  end
+end
+
 M.grep_lgrep = function(_, opts)
   opts.__ACT_TO({
     resume = true,
@@ -812,7 +831,7 @@ M.sym_lsym = function(_, opts)
 end
 
 M.toggle_flag = function(_, opts)
-  local o = { resume = true, cwd = opts.cwd }
+  local o = vim.tbl_deep_extend("keep", { resume = true }, opts.__call_opts)
   local flag = opts.toggle_flag
   if not flag then
     utils.err("'toggle_flag' not set")

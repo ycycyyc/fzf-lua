@@ -119,7 +119,8 @@ end
 ---@return string[]
 M.strsplit = function(inputstr, sep)
   local t = {}
-  if #sep == 1 then
+  -- Also match any single character class (e.g. %s, %a, etc)
+  if #sep == 1 or sep:match("^%%.$") then
     for str in string.gmatch(inputstr, "([^" .. sep .. "]+)") do
       table.insert(t, str)
     end
@@ -214,6 +215,10 @@ function M.regex_to_magic(str)
   return [[\v]] .. str:gsub("[=&<>]", function(x) return [[\]] .. x end)
 end
 
+function M.ctag_to_magic(str)
+  return [[\v]] .. str:gsub("[=&@<>{%(%)%.%[]", function(x) return [[\]] .. x end)
+end
+
 function M.sk_escape(str)
   if not str then return str end
   return str:gsub('["`]', function(x)
@@ -228,15 +233,13 @@ function M.lua_escape(str)
   end)
 end
 
+---@see vim.pesc
 function M.lua_regex_escape(str)
   -- escape all lua special chars
   -- ( ) % . + - * [ ? ^ $
   if not str then return nil end
   -- gsub returns a tuple, return the string only or unexpected happens (#1257)
-  local ret = str:gsub("[%(%)%.%+%-%*%[%?%^%$%%]", function(x)
-    return "%" .. x
-  end)
-  return ret
+  return (str:gsub("[%(%)%.%%%+%-%*%?%[%]%^%$]", "%%%1"))
 end
 
 function M.glob_escape(str)
@@ -647,7 +650,12 @@ end
 function M.hexcol_from_hl(hlgroup, what, mode)
   if not hlgroup or not what then return end
   local hexcol = synIDattr(hlgroup, what, mode)
-  if hexcol and not hexcol:match("^#") then
+  -- Without termguicolors hexcol returns `{ctermfg|ctermbg}` which is
+  -- a simple number representing the term ANSI color (e.g. 1-15, etc)
+  -- in which case we return the number as is so it can be passed onto
+  -- fzf's "--color" flag, this shouldn't be an issue for `ansi_from_hl`
+  -- as the function validates the a 6-digit hex number (#1422)
+  if hexcol and not hexcol:match("^#") and not tonumber(hexcol) then
     -- try to acquire the color from the map
     -- some schemes don't capitalize first letter?
     local col = M.COLORMAP()[hexcol:sub(1, 1):upper() .. hexcol:sub(2)]
@@ -669,6 +677,9 @@ function M.ansi_from_rgb(rgb, s)
   local r, g, b = hex2rgb(rgb)
   if r and g and b then
     return string.format("[38;2;%d;%d;%dm%s%s", r, g, b, s, "[0m")
+  elseif tonumber(rgb) then
+    -- No termguicolors, use the number as is
+    return string.format("[38;5;%dm%s%s", rgb, s, "[0m")
   end
   return s
 end
@@ -700,6 +711,9 @@ function M.ansi_from_hl(hl, s)
         table.insert(escseqs, string.format("[%d;2;%d;%d;%dm", p.code, r, g, b))
         -- elseif #hexcol>0 then
         --   print("unresolved", hl, w, hexcol, M.COLORMAP()[synIDattr(hl, w)])
+      elseif tonumber(hexcol) then
+        -- No termguicolors, use the number as is
+        table.insert(escseqs, string.format("[%d;5;%dm", p.code, tonumber(hexcol)))
       end
     else
       local value = synIDattr(hl, w)
@@ -808,6 +822,10 @@ end
 function M.fzf_winobj()
   -- use 'loadstring' to prevent circular require
   return loadstring("return require'fzf-lua'.win.__SELF()")()
+end
+
+function M.CTX()
+  return loadstring("return require'fzf-lua'.core.CTX()")()
 end
 
 function M.resume_get(what, opts)
@@ -1163,16 +1181,31 @@ function M.neovim_bind_to_fzf(key)
   return key
 end
 
+local function version_str_to_num(str)
+  if type(str) ~= "string" then return end
+  local major, minor, patch = str:match("(%d+).(%d+)%.?(.*)")
+  if not major and str:match("HEAD") then return 5 end
+  return tonumber(string.format("%d.%d%d", major, minor, tonumber(patch) or 0))
+end
+
 function M.fzf_version(opts)
-  opts = opts or {}
   -- temp unset "FZF_DEFAULT_OPTS" as it might fail `--version`
   -- if it contains options aren't compatible with fzf's version
   local FZF_DEFAULT_OPTS = vim.env.FZF_DEFAULT_OPTS
   vim.env.FZF_DEFAULT_OPTS = nil
-  local out, rc = M.io_system({ opts.fzf_bin or "fzf", "--version" })
+  local out, rc = M.io_system({ opts and opts.fzf_bin or "fzf", "--version" })
   vim.env.FZF_DEFAULT_OPTS = FZF_DEFAULT_OPTS
-  if out:match("HEAD") then return 4 end
-  return tonumber(out:match("(%d+.%d+).")), rc, out
+  return version_str_to_num(out), rc, out
+end
+
+function M.sk_version(opts)
+  -- temp unset "SKIM_DEFAULT_OPTIONS" as it might fail `--version`
+  -- if it contains options aren't compatible with sk's version
+  local SKIM_DEFAULT_OPTIONS = vim.env.SKIM_DEFAULT_OPTIONS
+  vim.env.SKIM_DEFAULT_OPTIONS = nil
+  local out, rc = M.io_system({ opts and opts.fzf_bin or "sk", "--version" })
+  vim.env.SKIM_DEFAULT_OPTIONS = SKIM_DEFAULT_OPTIONS
+  return version_str_to_num(out), rc, out
 end
 
 function M.git_version()
@@ -1222,6 +1255,30 @@ function M.create_user_command_callback(provider, arg, altmap)
       end
     end
     fzf_lua[prov](opts)
+  end
+end
+
+--- Checks if treesitter parser for language is installed
+---@param lang string
+function M.has_ts_parser(lang)
+  if M.__HAS_NVIM_011 then
+    return vim.treesitter.language.add(lang)
+  else
+    return pcall(vim.treesitter.language.add, lang)
+  end
+end
+
+--- Wrapper around vim.lsp.jump_to_location which was deprecated in v0.11
+---@param location lsp.Location|lsp.LocationLink
+---@param offset_encoding 'utf-8'|'utf-16'|'utf-32'
+---@param reuse_win boolean?
+---@return boolean
+function M.jump_to_location(location, offset_encoding, reuse_win)
+  if M.__HAS_NVIM_011 then
+    return vim.lsp.util.show_document(location, offset_encoding,
+      { reuse_win = reuse_win, focus = true })
+  else
+    return vim.lsp.util.jump_to_location(location, offset_encoding, reuse_win)
   end
 end
 
