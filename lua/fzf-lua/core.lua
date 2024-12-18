@@ -497,36 +497,8 @@ end
 
 -- Create fzf --color arguments from a table of vim highlight groups.
 M.create_fzf_colors = function(opts)
-  local colors = opts and opts.fzf_colors
-  if type(colors) == "function" then
-    colors = colors(opts)
-  end
-  -- auto create `fzf_colors` based on Neovim's current colorscheme
-  if colors == true then
-    colors = {
-      ["fg"]      = { "fg", opts.hls.fzf.normal },
-      ["bg"]      = { "bg", opts.hls.fzf.normal },
-      ["hl"]      = { "fg", opts.hls.fzf.match },
-      ["fg+"]     = { "fg", opts.hls.fzf.cursorline },
-      ["bg+"]     = { "bg", opts.hls.fzf.cursorline },
-      ["hl+"]     = { "fg", opts.hls.fzf.match },
-      ["info"]    = { "fg", opts.hls.fzf.info },
-      ["border"]  = { "fg", opts.hls.fzf.border },
-      ["gutter"]  = { "bg", opts.hls.fzf.gutter },
-      ["query"]   = { "fg", opts.hls.fzf.query, "regular" },
-      ["prompt"]  = { "fg", opts.hls.fzf.prompt },
-      ["pointer"] = { "fg", opts.hls.fzf.pointer },
-      ["marker"]  = { "fg", opts.hls.fzf.marker },
-      ["spinner"] = { "fg", opts.hls.fzf.spinner },
-      ["header"]  = { "fg", opts.hls.fzf.header },
-    }
-    if opts.__FZF_VERSION and opts.__FZF_VERSION >= 0.35 then
-      colors.separator = { "fg", opts.hls.fzf.separator }
-    end
-    if opts.__FZF_VERSION and opts.__FZF_VERSION >= 0.41 then
-      colors.scrollbar = { "fg", opts.hls.fzf.scrollbar }
-    end
-  end
+  if type(opts.fzf_colors) ~= "table" then return end
+  local colors = opts.fzf_colors
 
   -- Inerherit from fzf.vim's g:fzf_colors
   -- fzf.vim:
@@ -537,7 +509,7 @@ M.create_fzf_colors = function(opts)
   --   fzf_colors = {
   --     ["fg"] = { "fg" , { "Comment", "Normal" } }
   --   }
-  colors = vim.tbl_extend("keep", colors or {},
+  colors = vim.tbl_extend("keep", type(colors) == "table" and colors or {},
     vim.tbl_map(function(v)
       -- Value isn't guaranteed a table, e.g:
       --   vim.g.fzf_colors = { ["gutter"] = "-1" }
@@ -550,6 +522,14 @@ M.create_fzf_colors = function(opts)
       end
       return new_v
     end, type(vim.g.fzf_colors) == "table" and vim.g.fzf_colors or {}))
+
+  -- Remove non supported colors from skim and older fzf versions
+  if not opts.__FZF_VERSION or opts.__FZF_VERSION < 0.35 then
+    colors.separator = nil
+  end
+  if not opts.__FZF_VERSION or opts.__FZF_VERSION < 0.41 then
+    colors.scrollbar = nil
+  end
 
   local tbl = {}
 
@@ -622,15 +602,6 @@ end
 ---@param opts table
 ---@return string[]
 M.build_fzf_cli = function(opts, fzf_win)
-  opts.fzf_opts = vim.tbl_extend("force", config.globals.fzf_opts, opts.fzf_opts or {})
-  -- copy/merge from globals
-  for _, o in ipairs({ "fzf_colors", "keymap" }) do
-    if opts[o] == nil then
-      opts[o] = config.globals[o]
-    elseif type(opts[o]) == "table" and type(config.globals[o]) == "table" then
-      opts[o] = vim.tbl_deep_extend("keep", opts[o], config.globals[o])
-    end
-  end
   -- below options can be specified directly in opts and will be
   -- prioritized: opts.<name> is prioritized over fzf_opts["--name"]
   for _, flag in ipairs({ "query", "prompt", "header", "preview" }) do
@@ -721,7 +692,7 @@ M.build_fzf_cli = function(opts, fzf_win)
         table.insert(cli_args, v)
       end
     end
-  elseif opts._is_fzf_tmux == 2  and opts.__FZF_VERSION then
+  elseif opts._is_fzf_tmux == 2 and opts.__FZF_VERSION then
     -- "--height" specified after "--tmux" will take priority and cause
     -- the job to spawn in the background without a visible interface
     -- NOTE: this doesn't happen with skim and will cause issues if
