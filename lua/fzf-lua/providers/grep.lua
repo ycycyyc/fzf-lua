@@ -36,8 +36,11 @@ local get_grep_cmd = function(opts, search_query, no_esc)
   opts._cmd = command
 
   if opts.rg_glob and not command:match("^rg") then
+    if not tonumber(opts.rg_glob) and not opts.silent then
+      -- Do not display the error message if using the defaults (rg_glob=1)
+      utils.warn("'--glob|iglob' flags require 'rg', ignoring 'rg_glob' option.")
+    end
     opts.rg_glob = false
-    utils.warn("'--glob|iglob' flags require 'rg', ignoring 'rg_glob' option.")
   end
 
   if opts.rg_glob then
@@ -89,6 +92,35 @@ local get_grep_cmd = function(opts, search_query, no_esc)
     opts.no_esc = true
     opts.search = utils.rg_escape(search_query)
     search_query = opts.search
+  end
+
+  do
+    -- Auto add `--line-number` for grep and `--line-number --column` for rg
+    -- NOTE: although rg's `--column` implies `--line-number` we still add
+    -- `--line-number` since we remove `--column` when search regex is empty
+    local bin = path.tail(command:match("[^%s]+"))
+    local bin2flags = {
+      grep = { { "--line-number", "-n" }, { "--recursive", "-r" } },
+      rg = { { "--line-number", "-n" }, { "--column" } }
+    }
+    for _, flags in ipairs(bin2flags[bin] or {}) do
+      local has_flag_group
+      for _, f in ipairs(flags) do
+        if command:match("^" .. utils.lua_regex_escape(f))
+            or command:match("%s+" .. utils.lua_regex_escape(f))
+        then
+          has_flag_group = true
+        end
+      end
+      if not has_flag_group then
+        if not opts.silent then
+          utils.warn(string.format(
+            "Added missing '%s' flag to '%s'. Add 'silent=true' to hide this message.",
+            table.concat(flags, "|"), bin))
+        end
+        command = make_entry.rg_insert_args(command, flags[1])
+      end
+    end
   end
 
   -- remove column numbers when search term is empty
@@ -179,7 +211,7 @@ local function normalize_live_grep_opts(opts)
   opts.__call_fn = utils.__FNCREF2__()
 
   -- prepend prompt with "*" to indicate "live" query
-  opts.prompt = type(opts.prompt) == "string" and opts.prompt or ""
+  opts.prompt = type(opts.prompt) == "string" and opts.prompt or "> "
   if opts.live_ast_prefix ~= false then
     opts.prompt = opts.prompt:match("^%*") and opts.prompt or ("*" .. opts.prompt)
   end

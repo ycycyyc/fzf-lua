@@ -25,7 +25,10 @@ M.commands = function(opts)
           if cmd then builtin_commands[cmd] = desc end
           cmd, desc = line:match("^|:(%S+)|%s*%S+%s*(.*%S)")
         elseif cmd then -- found
-          if line:match("^%s%+%S") then desc = desc .. (line:match("^%s*(.*%S)") or "") end
+          if line:match("^%s+%S") then
+            local desc_continue = line:match("^%s*(.*%S)")
+            desc = desc .. (desc_continue and " " .. desc_continue or "")
+          end
           if line:match("^%s*$") then break end
         end
       end
@@ -116,7 +119,7 @@ M.command_history = function(opts)
   opts = config.normalize_opts(opts, "command_history")
   if not opts then return end
   if opts.fzf_opts["--header"] == nil then
-    opts.fzf_opts["--header"] = arg_header("<CR>", "<Ctrl-e>", "execute")
+    opts = core.set_header(opts, opts.headers)
   end
   history(opts, "cmd")
 end
@@ -125,7 +128,7 @@ M.search_history = function(opts)
   opts = config.normalize_opts(opts, "search_history")
   if not opts then return end
   if opts.fzf_opts["--header"] == nil then
-    opts.fzf_opts["--header"] = arg_header("<CR>", "<Ctrl-e>", "search")
+    opts = core.set_header(opts, opts.headers)
   end
   history(opts, "search")
 end

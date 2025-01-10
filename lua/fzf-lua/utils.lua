@@ -10,11 +10,10 @@ local uv = vim.uv or vim.loop
 
 local M = {}
 
-M.__HAS_NVIM_06 = vim.fn.has("nvim-0.6") == 1
-M.__HAS_NVIM_07 = vim.fn.has("nvim-0.7") == 1
 M.__HAS_NVIM_08 = vim.fn.has("nvim-0.8") == 1
 M.__HAS_NVIM_09 = vim.fn.has("nvim-0.9") == 1
 M.__HAS_NVIM_010 = vim.fn.has("nvim-0.10") == 1
+M.__HAS_NVIM_0102 = vim.fn.has("nvim-0.10.2") == 1
 M.__HAS_NVIM_011 = vim.fn.has("nvim-0.11") == 1
 M.__IS_WINDOWS = vim.fn.has("win32") == 1 or vim.fn.has("win64") == 1
 -- `:help shellslash` (for more info see #1055)
@@ -119,19 +118,12 @@ end
 ---@return string[]
 M.strsplit = function(inputstr, sep)
   local t = {}
-  -- Also match any single character class (e.g. %s, %a, etc)
-  if #sep == 1 or sep:match("^%%.$") then
-    for str in string.gmatch(inputstr, "([^" .. sep .. "]+)") do
-      table.insert(t, str)
-    end
-  else
-    local s, m, r = inputstr, nil, nil
-    repeat
-      m, r = s:match("^(.-)" .. sep .. "(.*)$")
-      s = r and r or s
-      table.insert(t, m or s)
-    until not m
-  end
+  local s, m, r = inputstr, nil, nil
+  repeat
+    m, r = s:match("^(.-)" .. sep .. "(.*)$")
+    s = r and r or s
+    table.insert(t, m or s)
+  until not m
   return t
 end
 
@@ -438,7 +430,7 @@ end
 function M.map_get(m, k)
   if not m then return end
   if not k then return m end
-  local keys = type(k) == "table" and k or M.strsplit(k, ".")
+  local keys = type(k) == "table" and k or M.strsplit(k, "%.")
   local iter = m
   for i = 1, #keys do
     iter = iter[keys[i]]
@@ -460,7 +452,7 @@ end
 ---@return table<string, unknown>
 function M.map_set(m, k, v)
   m = m or {}
-  local keys = type(k) == "table" and k or M.strsplit(k, ".")
+  local keys = type(k) == "table" and k or M.strsplit(k, "%.")
   local map = m
   for i = 1, #keys do
     local key = keys[i]
@@ -849,9 +841,9 @@ end
 
 ---@param fname string
 ---@param name string|nil
----@param silent boolean
+---@param silent boolean|number
 function M.load_profile_fname(fname, name, silent)
-  local profile = name or fname:match("([^%p]+)%.lua$") or "<unknown>"
+  local profile = name or vim.fn.fnamemodify(fname, ":t:r") or "<unknown>"
   local ok, res = pcall(dofile, fname)
   if ok and type(res) == "table" then
     -- success
@@ -859,10 +851,10 @@ function M.load_profile_fname(fname, name, silent)
       M.info(string.format("Successfully loaded profile '%s'", profile))
     end
     return res
-  elseif silent then
-    return
   end
-  if not ok then
+  -- If called from `setup` we set `silent=1` so we can alert the user on
+  -- errors loading the requested profiles
+  if silent ~= true and not ok then
     M.warn(string.format("Unable to load profile '%s': %s", profile, res:match("[^\n]+")))
   elseif type(res) ~= "table" then
     M.warn(string.format("Unable to load profile '%s': wrong type %s", profile, type(res)))

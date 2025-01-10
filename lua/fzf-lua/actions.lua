@@ -95,6 +95,8 @@ end
 M.act = function(actions, selected, opts)
   if not actions or not selected then return end
   local keybind, entries = M.normalize_selected(actions, selected, opts)
+  -- fzf >= 0.53 and `--exit-0`
+  if not keybind then return end
   local action = actions[keybind]
   -- Backward compat, was action defined as "default"
   if not action and keybind == "enter" then
@@ -142,17 +144,25 @@ M.vimcmd_entry = function(_vimcmd, selected, opts, pcall_vimcmd)
       if not path.is_absolute(fullpath) then
         fullpath = path.join({ opts.cwd or opts._cwd or uv.cwd(), fullpath })
       end
-      -- Adjust "<auto>" edits based on entry being buffer or filename
-      local vimcmd = _vimcmd:gsub("<auto>", entry.bufnr and entry.bufname and "b" or "e")
-      -- Do not execute "edit" commands if we already have the same buffer/file open
-      -- or if we are dealing with a URI as it's open with `vim.lsp.util.show_document`
       -- opts.__CTX isn't guaranteed by API users (#1414)
       local CTX = opts.__CTX or utils.CTX()
-      if vimcmd == "e" and (entry.uri or path.equals(fullpath, CTX.bname))
-          or vimcmd == "b" and entry.bufnr and entry.bufnr == CTX.bufnr
-      then
-        vimcmd = nil
-      end
+      local target_equals_current = entry.bufnr and entry.bufnr == CTX.bufnr
+          or path.equals(fullpath, CTX.bname)
+      local vimcmd = (function()
+        -- Do not execute "edit" commands if we already have the same buffer/file open
+        -- or if we are dealing with a URI as it's open with `vim.lsp.util.show_document`
+        if _vimcmd == "<auto>" and (entry.uri or target_equals_current) then
+          return nil
+        end
+        -- Same buffer splits and URI entries only execute the split cmd
+        -- after a split we land in the same buffer, remove the piped edit
+        -- e.g. "vsplit | e" -> "vsplit" (#1677)
+        if _vimcmd:match("| <auto>") and (entry.uri or target_equals_current) then
+          return _vimcmd:gsub("| <auto>", "")
+        end
+        -- Replace "<auto>" based on entry being buffer or filename
+        return _vimcmd:gsub("<auto>", entry.bufnr and entry.bufname and "b" or "e")
+      end)()
       -- ":b" and ":e" commands replace the current buffer
       local will_replace_curbuf = vimcmd == "e" or vimcmd == "b"
       if will_replace_curbuf
@@ -186,7 +196,7 @@ M.vimcmd_entry = function(_vimcmd, selected, opts, pcall_vimcmd)
           vimcmd = vimcmd .. "!"
         end
         -- URI entries only execute new buffers (new|vnew|tabnew)
-        if not entry.uri then
+        if not entry.uri and not target_equals_current then
           -- Force full paths when `autochdir=true` (#882)
           vimcmd = string.format("%s %s", vimcmd, (function()
             -- `:argdel|:argadd` uses only paths
@@ -395,8 +405,15 @@ M.buf_switch_or_edit = M.file_switch_or_edit
 M.buf_del = function(selected, opts)
   for _, sel in ipairs(selected) do
     local entry = path.entry_to_file(sel, opts)
-    if entry.bufnr and not utils.buffer_is_dirty(entry.bufnr, true, false) then
-      vim.api.nvim_buf_delete(entry.bufnr, { force = true })
+    if entry.bufnr then
+      if not utils.buffer_is_dirty(entry.bufnr, true, false) then
+        vim.api.nvim_buf_delete(entry.bufnr, { force = true })
+      elseif vim.api.nvim_buf_call(entry.bufnr, function()
+            return utils.save_dialog(entry.bufnr)
+          end)
+      then
+        vim.api.nvim_buf_delete(entry.bufnr, { force = true })
+      end
     end
   end
 end

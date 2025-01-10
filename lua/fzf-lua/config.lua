@@ -10,18 +10,6 @@ local M = {}
 -- set this so that make_entry won't get nil err when setting remotely
 M.__resume_data = {}
 
--- set|get the latest wrapped process PID
--- NOTE: we don't store this closure in `opts` (or store a ref to `opts`)
--- as together with `__resume_data` it can create a memory leak having to
--- store recursive copies of the `opts` table (#723)
-M.set_pid = function(pid)
-  M.__pid = pid
-end
-
-M.get_pid = function()
-  return M.__pid
-end
-
 M.resume_get = function(what, opts)
   assert(opts.__resume_key)
   if type(opts.__resume_get) == "function" then
@@ -248,17 +236,37 @@ function M.normalize_opts(opts, globals, __resume_key)
   -- merge with provider defaults from globals (defaults + setup options)
   opts = vim.tbl_deep_extend("keep", opts, utils.tbl_deep_clone(globals))
 
+  -- Backward compat: merge `winopts` with outputs from `winopts_fn`
+  local winopts_fn = opts.winopts_fn or M.globals.winopts_fn
+  if type(winopts_fn) == "function" then
+    if not opts.silent then
+      utils.warn(
+        "Deprecated option: 'winopts_fn' -> 'winopts'. Add 'silent=true' to hide this message.")
+    end
+    local ret = winopts_fn(opts) or {}
+    if not utils.tbl_isempty(ret) and (not opts.winopts or type(opts.winopts) == "table") then
+      opts.winopts = vim.tbl_deep_extend("force", opts.winopts or {}, ret)
+    end
+  end
+
   -- Merge values from globals
   for _, k in ipairs({
     "winopts", "keymap", "fzf_opts", "fzf_colors", "fzf_tmux_opts", "hls"
   }) do
     local setup_val = M.globals[k]
+    if type(setup_val) == "function" then
+      setup_val = setup_val(opts)
+      if type(setup_val) == "table" then
+        local default_val = utils.map_get(M.defaults, k)
+        if type(default_val) == "table" then
+          setup_val = vim.tbl_deep_extend("force", {}, default_val, setup_val)
+        end
+      end
+    end
     if type(setup_val) == "table" then
       -- must clone or map will be saved as reference
       -- and then overwritten if found in 'backward_compat'
       setup_val = utils.tbl_deep_clone(setup_val)
-    elseif type(setup_val) == "function" then
-      setup_val = setup_val(opts)
     end
     if opts[k] == nil then
       opts[k] = setup_val
@@ -280,6 +288,14 @@ function M.normalize_opts(opts, globals, __resume_key)
     if v == "" then opts.fzf_opts[k] = true end
   end
 
+  -- backward compat for `winopts.preview.{wrap|hidden}`
+  for k, v in pairs({ wrap = "nowrap", hidden = "nohidden" }) do
+    local val = utils.map_get(opts, "winopts.preview." .. k)
+    if type(val) == "string" then
+      utils.map_set(opts, "winopts.preview." .. k, not val:match(v))
+    end
+  end
+
   -- fzf.vim's `g:fzf_history_dir` (#1127)
   if vim.g.fzf_history_dir and opts.fzf_opts["--history"] == nil then
     local histdir = libuv.expand(vim.g.fzf_history_dir)
@@ -289,24 +305,6 @@ function M.normalize_opts(opts, globals, __resume_key)
     if vim.fn.isdirectory(histdir) == 1 and type(opts.__resume_key) == "string" then
       opts.fzf_opts["--history"] = path.join({ histdir, opts.__resume_key })
     end
-  end
-
-  -- prioritize fzf-tmux split pane flags over the
-  -- popup flag `-p` from fzf-lua defaults (#865)
-  opts._is_fzf_tmux_popup = true
-  if type(opts.fzf_tmux_opts) == "table" then
-    for _, flag in ipairs({ "-u", "-d", "-l", "-r" }) do
-      if opts.fzf_tmux_opts[flag] then
-        opts._is_fzf_tmux_popup = false
-        opts.fzf_tmux_opts["-p"] = nil
-      end
-    end
-  end
-
-  -- Merge `winopts` with outputs from `winopts_fn`
-  local winopts_fn = opts.winopts_fn or M.globals.winopts_fn
-  if type(winopts_fn) == "function" then
-    opts.winopts = vim.tbl_deep_extend("force", opts.winopts, winopts_fn(opts) or {})
   end
 
   -- Merge arrays from globals|defaults, can't use 'vim.tbl_xxx'
@@ -332,13 +330,14 @@ function M.normalize_opts(opts, globals, __resume_key)
     "fzf_raw_args",
     "file_icon_padding",
     "dir_icon",
+    "help_open_win",
   }) do
     if opts[s] == nil then
       opts[s] = M.globals[s]
     end
     local pattern_prefix = "%-%-prompt="
     local pattern_prompt = ".-"
-    local surround = opts[s] and opts[s]:match(pattern_prefix .. "(.)")
+    local surround = type(opts[s]) == "string" and opts[s]:match(pattern_prefix .. "(.)")
     -- prompt was set without surrounding quotes
     -- technically an error but we can handle it gracefully instead
     if surround and surround ~= [[']] and surround ~= [["]] then
@@ -472,10 +471,21 @@ function M.normalize_opts(opts, globals, __resume_key)
     -- globals.winopts.preview.default
     opts.previewer = opts.previewer()
   end
-  if type(opts.previewer) == "table" or opts.previewer == true then
-    -- merge with the default builtin previewer
+  -- "Shortcut" values to the builtin previewer
+  -- merge with builtin previewer defaults
+  if type(opts.previewer) == "table"
+      or opts.previewer == true
+      or opts.previewer == "hidden"
+      or opts.previewer == "nohidden"
+  then
+    -- of type string, can only be "hidden|nohidden"
+    if type(opts.previewer) == "string" then
+      assert(opts.previewer == "hidden" or opts.previewer == "nohidden")
+      utils.map_set(opts, "winopts.preview.hidden", opts.previewer ~= "nohidden")
+    end
     opts.previewer = vim.tbl_deep_extend("keep",
-      type(opts.previewer) == "table" and opts.previewer or {}, M.globals.previewers.builtin)
+      type(opts.previewer) == "table" and opts.previewer or {},
+      M.globals.previewers.builtin)
   end
 
   -- Convert again in case the bool option came from global opts
@@ -659,6 +669,7 @@ function M.normalize_opts(opts, globals, __resume_key)
               ["--highlight-line"] = true,
             }
           },
+          ["0.53"] = { fzf_opts = { ["--tmux"] = true } },
           ["0.52"] = { fzf_opts = { ["--highlight-line"] = true } },
           ["0.42"] = {
             fzf_opts = {
@@ -731,22 +742,27 @@ function M.normalize_opts(opts, globals, __resume_key)
   end
 
   -- Are we using fzf-tmux? if so get available columns
-  opts._is_fzf_tmux = vim.env.TMUX
-      -- pre fzf v0.53 uses the fzf-tmux script
-      and opts.fzf_bin:match("fzf%-tmux$") and 1
-      -- fzf v0.53 added native tmux integration
-      or utils.has(opts, "fzf", { 0, 53 }) and opts.fzf_opts["--tmux"] and 2
-      -- skim v0.15.5 added native tmux integration
-      or utils.has(opts, "sk", { 0, 15, 5 }) and opts.fzf_opts["--tmux"] and 2
-  if opts._is_fzf_tmux then
-    local out = utils.io_system({ "tmux", "display-message", "-p", "#{window_width}" })
-    opts._tmux_columns = tonumber(out:match("%d+"))
-    opts.winopts.split = nil
-    if opts._is_fzf_tmux == 2 then
-      -- native tmux integration is implemented using tmux popups
-      opts._is_fzf_tmux_popup = true
+  opts._is_fzf_tmux = (function()
+    if not vim.env.TMUX then return end
+    local is_tmux =
+        (opts.fzf_bin:match("fzf%-tmux$") or opts.fzf_bin:match("sk%-tmux$")) and 1
+        -- fzf v0.53 added native tmux integration
+        or utils.has(opts, "fzf", { 0, 53 }) and opts.fzf_opts["--tmux"] and 2
+        -- skim v0.15.5 added native tmux integration
+        or utils.has(opts, "sk", { 0, 15, 5 }) and opts.fzf_opts["--tmux"] and 2
+    if is_tmux == 1 then
+      -- backward compat when using the `fzf-tmux` script: prioritize fzf-tmux
+      -- split pane flags over the popup flag `-p` from fzf-lua defaults (#865)
+      if type(opts.fzf_tmux_opts) == "table" then
+        for _, flag in ipairs({ "-u", "-d", "-l", "-r" }) do
+          if opts.fzf_tmux_opts[flag] then
+            opts.fzf_tmux_opts["-p"] = nil
+          end
+        end
+      end
     end
-  end
+    return is_tmux
+  end)()
 
   -- refresh highlights if background/colorscheme changed (#1092)
   if not M.__HLS_STATE
@@ -778,8 +794,13 @@ function M.normalize_opts(opts, globals, __resume_key)
         })
     then
       -- Disable file_icons if requested package isn't available
-      utils.warn(string.format("error loading '%s', disabling 'file_icons'.",
-        opts.file_icons == "mini" and "mini.icons" or "nvim-web-devicons"))
+      -- we set the default value to "1" but since it's the default
+      -- don't display the warning unless the user specifically set
+      -- file_icons to `true` or `mini|devicons`
+      if not tonumber(opts.file_icons) then
+        utils.warn(string.format("error loading '%s', disabling 'file_icons'.",
+          opts.file_icons == "mini" and "mini.icons" or "nvim-web-devicons"))
+      end
       opts.file_icons = nil
     end
     if opts.file_icons == "mini" then
@@ -797,10 +818,6 @@ function M.normalize_opts(opts, globals, __resume_key)
     end
   end
 
-  -- libuv.spawn_nvim_fzf_cmd() pid callback
-  opts._set_pid = M.set_pid
-  opts._get_pid = M.get_pid
-
   -- mark as normalized
   opts._normalized = true
 
@@ -808,7 +825,7 @@ function M.normalize_opts(opts, globals, __resume_key)
 end
 
 M.bytecode = function(s, datatype)
-  local keys = utils.strsplit(s, ".")
+  local keys = utils.strsplit(s, "%.")
   local iter = M
   for i = 1, #keys do
     iter = iter[keys[i]]

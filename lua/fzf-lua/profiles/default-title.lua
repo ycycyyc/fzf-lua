@@ -1,24 +1,24 @@
 local function title(str, opts)
   return vim.tbl_deep_extend("keep", opts or {},
     {
-      prompt = false,
       winopts = {
-        -- title = { { " " .. str .. " ", hls.title } },
+        -- title = { { " " .. str .. " ", "IncSearch" } },
         title = " " .. str .. " ",
-        title_pos = "center",
       }
     })
 end
 return {
   desc                 = "defaults using title instead of prompt",
+  defaults             = { prompt = false },
+  winopts              = { title_pos = "center" },
   files                = title("Files"),
   buffers              = title("Buffers"),
   tabs                 = title("Tabs"),
   lines                = title("Lines"),
   blines               = title("Buffer Lines"),
   treesitter           = title("Treesitter"),
-  grep                 = title("Grep", { prompt = "> " }),
-  grep_curbuf          = title("Buffer Grep", { prompt = "> " }),
+  grep                 = title("Grep"),
+  grep_curbuf          = title("Buffer Grep"),
   git                  = {
     files    = title("Git Files"),
     status   = title("Git Status"),
@@ -34,7 +34,7 @@ return {
   quickfix_stack       = title("Quickfix List Stack"),
   loclist              = title("Location List"),
   loclist_stack        = title("Location List Stack"),
-  tags                 = title("Tags", { prompt = "> " }),
+  tags                 = title("Tags"),
   btags                = title("Buffer Tags"),
   colorschemes         = title("Colorschemes"),
   awesome_colorschemes = title("Awesome Colorschemes"),
@@ -43,8 +43,7 @@ return {
   manpages             = title("Man Pages"),
   lsp                  = {
     title_prefix = "LSP",
-    winopts      = { title_pos = "center" },
-    symbols      = { prompt = "> ", title_prefix = "LSP", winopts = { title_pos = "center" } },
+    symbols      = { title_prefix = "LSP" },
     finder       = title("LSP Finder"),
     code_actions = title("Code Actions"),
   },

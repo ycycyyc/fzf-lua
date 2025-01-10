@@ -117,6 +117,26 @@ If set to a `function` the return value will be used (`string|object`).
 
 If set to an `object`, fzf-lua expects a previewer class that will be initlaized with `object:new(...)`, see the advanced Wiki "Neovim builtin previewer" section for more info.
 
+#### setup.help_open_win
+
+Type: `fun(number, boolean, table)`,  Default: `vim.api.nvim_open_win`
+
+Function override for opening the help window (default bound to `<F1>`), will be called with the same arguments as `nvim_open_win(bufnr, enter, winopts)`. By default opens a floating window at the bottom of current screen.
+
+Override this function if you want to customize window configs of the help window (location, width, border, etc.).
+
+Example, opening a floating help window at the top of screen with single border:
+```lua
+    require("fzf-lua").setup({
+      help_open_win = function(buf, enter, opts)
+        opts.border = 'single'
+        opts.row = 0
+        opts.col = 0
+        return vim.api.nvim_open_win(buf, enter, opts)
+      end,
+    })
+```
+
 ---
 
 ## Global Options
@@ -269,6 +289,18 @@ Type: `boolean`, Default: `false`
 
 Use fullscreen for the fzf-load floating window.
 
+#### globals.winopts.title
+
+Type: `string`, Default: `nil`
+
+Controls title display in the fzf window, set by the calling picker.
+
+#### globals.winopts.title_pos
+
+Type: `string`, Default: `center`
+
+Controls title display in the fzf window, possible values are `left|right|center`.
+
 #### globals.winopts.treesitter
 
 Type: `boolean`, Default: `false`
@@ -292,13 +324,13 @@ Debounce time (milliseconds) for displaying the preview buffer in the builtin pr
 
 #### globals.winopts.preview.wrap
 
-Type: `string`, Default: `nowrap`
+Type: `boolean`, Default: `false`
 
 Line wrap in both native fzf and the builtin previewer, mapped to fzf's `--preview-window:[no]wrap` flag.
 
 #### globals.winopts.preview.hidden
 
-Type: `string`, Default: `nohidden`
+Type: `boolean`, Default: `false`
 
 Preview startup visibility in both native fzf and the builtin previewer, mapped to fzf's `--preview-window:[no]hidden` flag.
 
@@ -362,7 +394,7 @@ Scrollbar style in the builtin previewer, set to `false` to disable, possible va
 
 #### globals.winopts.preview.scrolloff
 
-Type: `number`, Default: `-2`
+Type: `number`, Default: `-1`
 
 Float style scrollbar offset from the right edge of the preview window.
 
