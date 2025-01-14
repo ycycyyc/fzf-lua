@@ -346,7 +346,7 @@ M.defaults.files                = {
   _fzf_nth_devicons      = true,
   git_status_cmd         = {
     "git", "-c", "color.status=false", "--no-optional-locks", "status", "--porcelain=v1" },
-  find_opts              = [[-type f -not -path '*/\.git/*' -printf '%P\n']],
+  find_opts              = [[-type f -not -path '*/\.git/*']],
   rg_opts                = [[--color=never --files --hidden --follow -g "!.git"]],
   fd_opts                = "--color=never --type f --hidden --follow --exclude .git",
   toggle_ignore_flag     = "--no-ignore",
@@ -445,6 +445,7 @@ M.defaults.git                  = {
     prompt     = "Branches> ",
     cmd        = "git branch --all --color",
     preview    = "git log --graph --pretty=oneline --abbrev-commit --color {1}",
+    remotes     = "local",
     actions    = {
       ["enter"]  = actions.git_switch,
       ["ctrl-x"] = { fn = actions.git_branch_del, reload = true },

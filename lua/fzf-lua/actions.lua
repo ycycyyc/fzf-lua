@@ -406,9 +406,8 @@ M.buf_del = function(selected, opts)
   for _, sel in ipairs(selected) do
     local entry = path.entry_to_file(sel, opts)
     if entry.bufnr then
-      if not utils.buffer_is_dirty(entry.bufnr, true, false) then
-        vim.api.nvim_buf_delete(entry.bufnr, { force = true })
-      elseif vim.api.nvim_buf_call(entry.bufnr, function()
+      if not utils.buffer_is_dirty(entry.bufnr, true, false)
+          or vim.api.nvim_buf_call(entry.bufnr, function()
             return utils.save_dialog(entry.bufnr)
           end)
       then
@@ -620,7 +619,11 @@ M.git_switch = function(selected, opts)
   -- do nothing for active branch
   if branch:find("%*") ~= nil then return end
   if branch:find("^remotes/") then
-    table.insert(cmd, "--detach")
+    if opts.remotes == "detach" then
+      table.insert(cmd, "--detach")
+    else
+      branch = branch:match("remotes/.-/(.-)$")
+    end
   end
   table.insert(cmd, branch)
   local output, rc = utils.io_systemlist(cmd)
